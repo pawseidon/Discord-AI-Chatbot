@@ -13,12 +13,21 @@ from langchain_community.tools.ddg_search import DuckDuckGoSearchRun
 from bot_utilities.config_loader import config
 from bot_utilities.ai_utils import get_crypto_price, search_internet
 from bot_utilities.memory_utils import ConversationMemory
-from bot_utilities.rag_utils import RAGSystem
-from bot_utilities.token_utils import token_optimizer
+from bot_utilities.rag_utils import RAGSystem, get_server_rag
+from bot_utilities.token_utils import TokenOptimizer
+from dotenv import load_dotenv
+import time
+import traceback
 
 # Initialize memory system
 conversation_memory = ConversationMemory()
 server_knowledge_bases = {}
+
+# Initialize token optimizer for reducing token usage
+token_optimizer = TokenOptimizer()
+
+# Environment variables
+load_dotenv()
 
 def get_server_rag(server_id: str) -> RAGSystem:
     """Get or create a RAG system for the server"""
@@ -28,46 +37,80 @@ def get_server_rag(server_id: str) -> RAGSystem:
 
 # Initialize the GROQ model
 def get_groq_llm():
-    api_key = os.environ.get("API_KEY")
-    model_name = config.get('MODEL_ID', 'meta-llama/llama-4-scout-17b-16e-instruct')
-    
+    """Create a Groq LLM client for agents"""
+    # Use smaller model for cost efficiency in agents
+    api_key = os.environ.get("GROQ_API_KEY") or os.environ.get("API_KEY")
     return ChatGroq(
-        api_key=api_key,
-        model_name=model_name
+        temperature=0.7, # Higher temp for more creativity
+        model="llama3-70b-8192", # Cheaper model for agents
+        groq_api_key=api_key,
+        max_tokens=1200, # Limit output tokens
     )
 
 # Define our tools
 
 # Web search tool 
 def create_search_tool():
-    """Create a web search tool using either Tavily (if API key exists) or DuckDuckGo"""
+    """Create a web search tool using either Tavily (if API key exists) or DuckDuckGo with fallbacks"""
     tavily_api_key = os.environ.get("TAVILY_API_KEY")
     
     if tavily_api_key:
         # Use Tavily if API key is available
+        print("Using Tavily for web search")
         return TavilySearchResults(max_results=5)
     else:
-        # Fall back to DuckDuckGo which doesn't require an API key
-        return DuckDuckGoSearchRun()
+        # Create a more robust DDG search with fallbacks
+        print("Using DuckDuckGo with fallbacks for web search")
+        return Tool(
+            name="WebSearch",
+            description="Search the web for current information. Use this for questions about recent events or factual information.",
+            func=search_internet_wrapper,
+        )
 
 # Use your existing search function from ai_utils.py
 async def search_internet_sync(query: str) -> str:
-    """Perform internet search using DuckDuckGo."""
-    result = await search_internet(query)
-    # Optimize the search result to reduce tokens
-    if result:
-        result = token_optimizer.clean_text(result)
-        result = token_optimizer.truncate_text(result, max_tokens=1000)
-    return result
+    """Perform internet search with robust fallback mechanisms."""
+    # Record the start time for performance tracking
+    start_time = time.time()
+    
+    try:
+        # Call the enhanced search_internet function with fallback mechanisms
+        result = await search_internet(query)
+        
+        # Optimize the search result to reduce tokens
+        if result:
+            result = token_optimizer.clean_text(result)
+            result = token_optimizer.truncate_text(result, max_tokens=1000)
+        
+        # Log success and timing
+        duration = time.time() - start_time
+        print(f"Search completed in {duration:.2f} seconds")
+        return result
+    except Exception as e:
+        # Comprehensive error handling
+        print(f"Error in search_internet_sync: {e}")
+        print(f"Stack trace: {traceback.format_exc()}")
+        
+        # Return a helpful error message
+        return f"I encountered an error while searching for '{query}'. Please try a more specific query or try again later."
 
 # Function to run async functions synchronously (for LangChain tools)
 def run_async(coro):
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(coro)
+    try:
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(coro)
+    except Exception as e:
+        print(f"Error in run_async: {e}")
+        return f"An error occurred while processing your request: {str(e)}"
 
 # Wrap the async function to be used in a LangChain tool
 def search_internet_wrapper(query: str) -> str:
-    return run_async(search_internet_sync(query))
+    try:
+        return run_async(search_internet_sync(query))
+    except Exception as e:
+        print(f"Error in search_internet_wrapper: {e}")
+        # Provide a fallback response rather than exposing the error
+        return f"I'm having trouble searching for '{query}'. Please try a different query or try again later."
 
 # Define more specialized tools
 class WeatherInput(BaseModel):
@@ -82,56 +125,65 @@ def get_weather(location: str) -> str:
 # Crypto price tool that uses your existing get_crypto_price function
 async def get_crypto_price_sync(crypto_name: str) -> str:
     """Get real-time cryptocurrency price information."""
-    # Use your existing crypto price function
-    loop = asyncio.get_event_loop()
-    price_info = await get_crypto_price(crypto_name)
-    if price_info:
-        return price_info
-    return f"Could not find price data for {crypto_name}"
+    try:
+        # Use your existing crypto price function
+        loop = asyncio.get_event_loop()
+        price_info = await get_crypto_price(crypto_name)
+        if price_info:
+            return price_info
+        return f"Could not find price data for {crypto_name}"
+    except Exception as e:
+        print(f"Error in get_crypto_price_sync: {e}")
+        return f"I encountered an error while fetching the price for {crypto_name}. Please try again later."
 
 # Wrap the async function to be used in a LangChain tool
 def get_crypto_price_wrapper(crypto_name: str) -> str:
-    return run_async(get_crypto_price_sync(crypto_name))
+    try:
+        return run_async(get_crypto_price_sync(crypto_name))
+    except Exception as e:
+        print(f"Error in get_crypto_price_wrapper: {e}")
+        return f"I couldn't retrieve the current price for {crypto_name}. There might be an issue with the data source."
 
 # Knowledge base query tool
 async def query_knowledge_base_sync(server_id: str, query: str) -> str:
     """Query the server's knowledge base"""
-    # Get the RAG system for this server
-    rag_system = get_server_rag(server_id)
-    
-    # Query the knowledge base
-    results = await rag_system.query(query, k=3)
-    
-    if not results:
-        return "No relevant information found in the knowledge base."
-    
-    # Format results
-    response = "Knowledge base results:\n\n"
-    for i, doc in enumerate(results):
-        # Optimize content to reduce tokens
-        content = token_optimizer.clean_text(doc.page_content)
-        content = token_optimizer.truncate_text(content, max_tokens=500)
+    try:
+        # Get the RAG system for this server
+        rag_system = get_server_rag(server_id)
         
-        response += f"[Document {i+1}]:\n{content}\n\n"
-        if "source" in doc.metadata:
-            response += f"Source: {doc.metadata['source']}\n"
-    
-    return response
+        # Query the knowledge base
+        results = await rag_system.query(query, k=3)
+        
+        if not results:
+            return "No relevant information found in the knowledge base."
+        
+        # Format results
+        response = "Knowledge base results:\n\n"
+        for i, doc in enumerate(results):
+            # Optimize content to reduce tokens
+            content = token_optimizer.clean_text(doc.page_content)
+            content = token_optimizer.truncate_text(content, max_tokens=500)
+            
+            response += f"[Document {i+1}]:\n{content}\n\n"
+            if "source" in doc.metadata:
+                response += f"Source: {doc.metadata['source']}\n"
+        
+        return response
+    except Exception as e:
+        print(f"Error in query_knowledge_base_sync: {e}")
+        return "I encountered an error while querying the knowledge base. Please try again later."
 
 # Wrapper for knowledge base query tool
 def query_knowledge_base_wrapper(server_id: str, query: str) -> str:
-    return run_async(query_knowledge_base_sync(server_id, query))
+    try:
+        return run_async(query_knowledge_base_sync(server_id, query))
+    except Exception as e:
+        print(f"Error in query_knowledge_base_wrapper: {e}")
+        return "I'm having trouble accessing the server's knowledge base right now. Please try again later."
 
 def create_tools(server_id=None):
     # Use search tool factory that handles both options
     search_tool = create_search_tool()
-    
-    # Also add our own search tool based on the bot's existing functionality
-    custom_search_tool = Tool(
-        name="InternetSearch",
-        description="Search the internet for current information. Useful for questions about recent events, current prices, or factual information.",
-        func=search_internet_wrapper,
-    )
     
     # Define other tools
     weather_tool = Tool(
@@ -147,7 +199,7 @@ def create_tools(server_id=None):
         func=get_crypto_price_wrapper,
     )
     
-    tools = [search_tool, custom_search_tool, weather_tool, crypto_tool]
+    tools = [search_tool, weather_tool, crypto_tool]
     
     # Add knowledge base tool if server_id is provided
     if server_id:

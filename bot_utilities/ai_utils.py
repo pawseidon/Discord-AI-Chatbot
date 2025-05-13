@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 from bot_utilities.news_utils import get_news_context, detect_news_query
 from bot_utilities.fallback_utils import is_offline_mode, record_llm_failure, record_llm_success, cache_successful_response, get_fallback_response
 import httpx
+import urllib.parse
+from bs4 import BeautifulSoup
 
 load_dotenv()
 
@@ -246,7 +248,7 @@ async def get_crypto_price(crypto_name):
         return None
 
 async def search_internet(query):
-    """Perform internet search using DuckDuckGo."""
+    """Perform internet search using DuckDuckGo with fallback options."""
     if not config['INTERNET_ACCESS']:
         return "Internet access has been disabled by user"
     
@@ -264,28 +266,151 @@ async def search_internet(query):
             query += f" {timestamp_cache['current_date']}"
     
     print(f"Searching the internet for: {query}")
+    
+    # Track the search methods we've tried
+    tried_methods = []
+    max_retries = 3
+    
+    # First try: DuckDuckGo with retries and exponential backoff
     try:
+        tried_methods.append("DuckDuckGo")
+        
         # Run duckduckgo search in a threadpool since it's synchronous
-        def perform_search():
+        def perform_ddg_search():
             with DDGS() as ddgs:
                 results = []
                 for r in ddgs.text(query, max_results=6):
                     results.append(r)
                 return results
         
-        results = await asyncio.to_thread(perform_search)
-        
-        if results:
-            search_results = ""
-            for index, result in enumerate(results[:6]):
-                search_results += f'[{index}] Title: {result["title"]}\nURL: {result.get("href", "No URL")}\nSnippet: {result["body"]}\n\n'
-            
-            return search_results
-        else:
-            return "No search results found for the given query."
+        # Try with exponential backoff
+        for attempt in range(max_retries):
+            try:
+                results = await asyncio.to_thread(perform_ddg_search)
+                
+                if results:
+                    search_results = ""
+                    for index, result in enumerate(results[:6]):
+                        search_results += f'[{index}] Title: {result["title"]}\nURL: {result.get("href", "No URL")}\nSnippet: {result["body"]}\n\n'
+                    
+                    return search_results
+                else:
+                    # If no results but no error, try next method
+                    print(f"DuckDuckGo returned no results for: {query}")
+                    break
+                    
+            except Exception as e:
+                # Check if it's a rate limit error (could be different error messages)
+                if any(error_term in str(e).lower() for error_term in ["rate", "limit", "429", "too many requests"]):
+                    # If it's the last retry, move on to the next method
+                    if attempt == max_retries - 1:
+                        print(f"DuckDuckGo rate limited after {max_retries} attempts, trying alternative methods")
+                        break
+                    
+                    # Otherwise, wait with exponential backoff
+                    wait_time = (2 ** attempt) + random.random()
+                    print(f"DuckDuckGo rate limited, retrying in {wait_time:.2f} seconds (attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                else:
+                    # For other errors, just try the next method
+                    print(f"DuckDuckGo search error: {e}")
+                    break
     except Exception as e:
-        print(f"Search error: {e}")
-        return f"Error performing internet search: {e}"
+        print(f"Error setting up DuckDuckGo search: {e}")
+
+    # If we reach here, DuckDuckGo has failed or been rate limited
+    
+    # Second try: Use Google search via alternative method
+    try:
+        tried_methods.append("Google")
+        print(f"Trying Google search for: {query}")
+        
+        async with aiohttp.ClientSession() as session:
+            # Create a Google-like search URL
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://www.google.com/search?q={encoded_query}"
+            
+            # Use a realistic user agent
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1"
+            }
+            
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    
+                    # Simple parsing to extract search results
+                    # This is a basic implementation and could be improved with better parsing
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    # Extract search results
+                    search_results = ""
+                    result_count = 0
+                    
+                    # Look for result blocks
+                    for div in soup.select("div.g"):
+                        try:
+                            title_element = div.select_one("h3")
+                            link_element = div.select_one("a")
+                            snippet_element = div.select_one("div.VwiC3b")
+                            
+                            if title_element and link_element and snippet_element:
+                                title = title_element.get_text().strip()
+                                link = link_element.get("href")
+                                if link.startswith("/url?"):
+                                    # Extract the actual URL from Google's redirect URL
+                                    link = link.split("?q=")[1].split("&")[0]
+                                snippet = snippet_element.get_text().strip()
+                                
+                                search_results += f"[{result_count}] Title: {title}\nURL: {link}\nSnippet: {snippet}\n\n"
+                                result_count += 1
+                                
+                                if result_count >= 5:
+                                    break
+                        except Exception as e:
+                            continue
+                    
+                    if search_results:
+                        return search_results
+                    
+                    # If parsing failed but we got a 200 response, return a simplified response
+                    if not search_results:
+                        return f"Successfully accessed search results for '{query}', but couldn't parse the results. Please try a more specific query."
+                else:
+                    print(f"Google search returned status code: {response.status}")
+                    # Continue to the next method if this fails
+    except Exception as e:
+        print(f"Google search error: {e}")
+
+    # Third try: Simple web search using a different endpoint
+    try:
+        tried_methods.append("Alternative Search")
+        print(f"Trying alternative search for: {query}")
+        
+        # You could implement various fallbacks here
+        # For example, using a simple API like SerpAPI (with API key) or a different search engine
+        
+        # This is a placeholder for demonstration
+        # In a real implementation, you would integrate with another search provider
+        
+        # For now, we'll return a message about the failure of previous methods
+        return f"Unable to perform a search for '{query}'. I tried {', '.join(tried_methods)}, but encountered rate limits or other issues. Please try again later with a more specific query."
+        
+    except Exception as e:
+        print(f"Alternative search error: {e}")
+    
+    # If all methods fail, return an error message
+    return f"I encountered difficulties searching for '{query}'. I tried {', '.join(tried_methods)} but wasn't able to get results. Please try again later or rephrase your query."
 
 async def stream_response(messages, model, client):
     """
@@ -842,15 +967,19 @@ def create_prompt(message, username, user_id, channel, conversation_history=None
     Returns:
         str: The formatted prompt
     """
+    # Get base instructions from config
+    default_instruction_name = config.get('DEFAULT_INSTRUCTION', 'hand')
+    
     # Get base instructions
     if not enhanced_instructions:
-        base_instructions = instructions.get(instruc_config, "You are an AI Discord bot. Be helpful, engaged, and conversational.")
+        # Use the loaded instructions from the beginning of the file or a default
+        base_instructions = instructions_content.get(default_instruction_name, "You are an AI Discord bot. Be helpful, engaged, and conversational.")
     else:
         # Use enhanced instructions if available
         base_instructions = enhanced_instructions
     
     # Current time info
-    current_time_str = get_current_time()
+    current_time_str = timestamp_cache["current_date"] + " " + timestamp_cache["current_time"]
     
     # Add specialized capabilities info
     specialized_capabilities = """

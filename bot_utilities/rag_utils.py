@@ -4,6 +4,9 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
+# Dictionary to store server knowledge bases
+server_knowledge_bases = {}
+
 class RAGSystem:
     def __init__(self, server_id: str, embedding_model="all-MiniLM-L6-v2"):
         self.server_id = server_id
@@ -61,4 +64,10 @@ class RAGSystem:
         for i, doc in enumerate(results):
             context += f"[Document {i+1}]:\n{doc.page_content}\n\n"
         
-        return context 
+        return context
+
+def get_server_rag(server_id: str) -> RAGSystem:
+    """Get or create a RAG system for the server"""
+    if server_id not in server_knowledge_bases:
+        server_knowledge_bases[server_id] = RAGSystem(server_id)
+    return server_knowledge_bases[server_id] 

@@ -10,6 +10,7 @@ requests>=2.31.0
 openai>=1.11.1
 duckduckgo-search>=4.1.1
 groq>=0.4.1
+beautifulsoup4>=4.12.2
 
 # Agent dependencies
 langchain>=0.3.25
