@@ -16,6 +16,7 @@ from duckduckgo_search import DDGS  # Use current DDGS API
 from dotenv import load_dotenv
 from bot_utilities.news_utils import get_news_context, detect_news_query
 from bot_utilities.fallback_utils import is_offline_mode, record_llm_failure, record_llm_success, cache_successful_response, get_fallback_response
+import httpx
 
 load_dotenv()
 
@@ -124,9 +125,26 @@ def get_remote_client():
         
     print(f"Connecting to remote API at: {api_base}")
     
+    # Configure a robust HTTP client with retries and timeouts
+    http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            connect=5.0,    # 5 seconds to connect
+            read=30.0,      # 30 seconds to read response
+            write=10.0,     # 10 seconds to write request
+            pool=5.0        # 5 seconds for connection from pool
+        ),
+        limits=httpx.Limits(
+            max_connections=10,
+            max_keepalive_connections=5,
+            keepalive_expiry=30.0  # 30 seconds keepalive
+        ),
+        follow_redirects=True
+    )
+    
     return AsyncOpenAI(
         base_url=api_base,
         api_key=api_key,
+        http_client=http_client, 
     )
 
 # Create client when needed (not at module import time)
@@ -283,10 +301,12 @@ async def stream_response(messages, model, client):
     """
     try:
         print(f"Attempting to stream response from model: {model}")
+        # Add timeout parameters and more robust configuration
         stream = await client.chat.completions.create(
             model=model,
             messages=messages,
             stream=True,
+            timeout=60.0,  # Add a 60-second timeout
         )
         
         collected_chunks = []
@@ -310,6 +330,30 @@ async def stream_response(messages, model, client):
         if len(messages) > 1:
             user_message = messages[-1]["content"]
             cache_successful_response(user_message, collected_content)
+    except httpx.TimeoutException as e:
+        print(f"Timeout error connecting to LLM: {e}")
+        print(f"Model: {model}")
+        if hasattr(client, 'base_url'):
+            print(f"Client base URL: {client.base_url}")
+        
+        # Record the failure
+        record_llm_failure()
+        
+        # Yield a fallback message
+        fallback_msg = "The AI service took too long to respond. Please try again later."
+        yield fallback_msg
+    except httpx.ConnectError as e:
+        print(f"Connection error communicating with LLM: {e}")
+        print(f"Model: {model}")
+        if hasattr(client, 'base_url'):
+            print(f"Client base URL: {client.base_url}")
+        
+        # Record the failure
+        record_llm_failure()
+        
+        # Yield a fallback message
+        fallback_msg = "I couldn't connect to the AI service. Please check your internet connection and try again."
+        yield fallback_msg
     except Exception as e:
         print(f"Error streaming from LLM: {e}")
         print(f"Model: {model}")
@@ -544,6 +588,7 @@ async def generate_response(instructions, history, stream=False):
                     response = await local_client.chat.completions.create(
                         model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
                         messages=messages,
+                        timeout=30.0,  # Add timeout
                     )
                     
                     # Record successful LLM call
@@ -555,19 +600,23 @@ async def generate_response(instructions, history, stream=False):
                         cache_successful_response(last_message, response.choices[0].message.content)
                         
                     return response.choices[0].message.content
+                except httpx.TimeoutException as e:
+                    print(f"Timeout error with local LLM: {e}")
+                    record_llm_failure()
+                except httpx.ConnectError as e:
+                    print(f"Connection error with local LLM: {e}")
+                    record_llm_failure()
                 except Exception as e:
                     print(f"Error with local LLM fallback: {e}")
-                    
-                    # Record the failure
                     record_llm_failure()
                     
-                    # If we get here, try using the fallback
-                    if history and len(history) > 0:
-                        last_message = history[-1]["content"]
-                        fallback_response = await get_fallback_response(last_message)
-                        return fallback_response
-                        
-                    return "I encountered an error connecting to both remote and local language models. Please check your configuration."
+                # If we get here, try using the fallback
+                if history and len(history) > 0:
+                    last_message = history[-1]["content"]
+                    fallback_response = await get_fallback_response(last_message)
+                    return fallback_response
+                    
+                return "I encountered an error connecting to both remote and local language models. Please check your configuration."
             
             # If streaming is requested and not using tools, return a streamed response
             if stream and not needs_real_time_info:
@@ -601,6 +650,7 @@ async def generate_response(instructions, history, stream=False):
                     messages=messages,        
                     tools=tools,
                     tool_choice="auto",
+                    timeout=45.0,  # Add timeout
                 )
                 
                 # Record successful LLM call
@@ -641,7 +691,8 @@ async def generate_response(instructions, history, stream=False):
                     print("Requesting second response after tool calls")
                     second_response = await remote_client.chat.completions.create(
                         model=config['MODEL_ID'],
-                        messages=messages
+                        messages=messages,
+                        timeout=45.0,  # Add timeout
                     ) 
                     
                     # Cache successful response
@@ -657,6 +708,31 @@ async def generate_response(instructions, history, stream=False):
                     cache_successful_response(last_message, response_message.content)
                     
                 return response_message.content
+                
+            except httpx.TimeoutException as e:
+                print(f"Timeout error with remote LLM: {e}")
+                print(f"API Base URL: {config['API_BASE_URL']}")
+                print(f"Model ID: {config['MODEL_ID']}")
+                record_llm_failure()
+                
+                # Try falling back to local model if available
+                if local_client is not None:
+                    try:
+                        print("Trying local model after remote timeout...")
+                        local_response = await local_client.chat.completions.create(
+                            model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
+                            messages=messages,
+                            timeout=30.0,
+                        )
+                        return local_response.choices[0].message.content
+                    except Exception as local_error:
+                        print(f"Local fallback also failed: {local_error}")
+                        
+            except httpx.ConnectError as e:
+                print(f"Connection error with remote LLM: {e}")
+                print(f"API Base URL: {config['API_BASE_URL']}")
+                print(f"Model ID: {config['MODEL_ID']}")
+                record_llm_failure()
                 
             except Exception as e:
                 print(f"Error with remote LLM: {e}")
@@ -674,7 +750,7 @@ async def generate_response(instructions, history, stream=False):
                     return fallback_response
                     
                 return "I encountered an error connecting to the AI service. Please try again later."
-                
+            
     except Exception as e:
         print(f"Unexpected error in generate_response: {e}")
         

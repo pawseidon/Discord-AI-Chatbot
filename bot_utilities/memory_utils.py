@@ -5,6 +5,8 @@ import asyncio
 from openai import AsyncOpenAI
 from bot_utilities.config_loader import config
 from bot_utilities.ai_utils import get_local_client, get_remote_client
+from datetime import datetime
+from typing import Dict, List, Any
 
 # Initialize paths for storing data
 DATA_DIR = "bot_data"
@@ -251,4 +253,69 @@ def get_enhanced_instructions(instructions, user_id):
         return instructions + personalization
     
     # If no preferences, return the original instructions
-    return instructions 
+    return instructions
+
+class ConversationMemory:
+    def __init__(self, storage_dir='bot_data/memories'):
+        self.storage_dir = storage_dir
+        os.makedirs(storage_dir, exist_ok=True)
+    
+    async def store_interaction(self, user_id: str, channel_id: str, query: str, response: str):
+        """Store conversation in memory"""
+        # Create user directory if it doesn't exist
+        user_dir = f"{self.storage_dir}/{user_id}"
+        os.makedirs(user_dir, exist_ok=True)
+        
+        # Load existing memories or create new
+        memory_file = f"{user_dir}/conversations.json"
+        memories = []
+        
+        if os.path.exists(memory_file):
+            with open(memory_file, 'r') as f:
+                try:
+                    memories = json.load(f)
+                except:
+                    memories = []
+        
+        # Add new memory
+        memories.append({
+            "timestamp": datetime.now().isoformat(),
+            "channel_id": channel_id,
+            "query": query,
+            "response": response
+        })
+        
+        # Keep only last 20 interactions
+        memories = memories[-20:]
+        
+        # Save memories
+        with open(memory_file, 'w') as f:
+            json.dump(memories, f)
+    
+    async def get_recent_conversations(self, user_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get recent conversations for context"""
+        memory_file = f"{self.storage_dir}/{user_id}/conversations.json"
+        
+        if not os.path.exists(memory_file):
+            return []
+        
+        with open(memory_file, 'r') as f:
+            try:
+                memories = json.load(f)
+                return memories[-limit:]
+            except:
+                return []
+    
+    async def format_memory_for_context(self, user_id: str, limit: int = 5) -> str:
+        """Format memory into context string for the agent"""
+        conversations = await self.get_recent_conversations(user_id, limit)
+        
+        if not conversations:
+            return ""
+        
+        context = "Recent conversation history:\n"
+        for i, conv in enumerate(conversations):
+            context += f"User: {conv['query']}\n"
+            context += f"Assistant: {conv['response']}\n"
+        
+        return context 

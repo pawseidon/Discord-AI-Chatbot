@@ -5,7 +5,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from cogs import COMMANDS, EVENT_HANDLERS
+from cogs import EVENT_HANDLERS
+from cogs.commands_cogs import get_all_cogs
 from bot_utilities.config_loader import config
 
 load_dotenv()
@@ -18,14 +19,21 @@ class AIBot(commands.AutoShardedBot):
             super().__init__(shard_count=1, *args, **kwargs)
 
     async def setup_hook(self) -> None:
-        for cog in COMMANDS:
-            cog_name = cog.split('.')[-1]
-            discord.client._log.info(f"Loaded Command {cog_name}")
-            await self.load_extension(f"{cog}")
+        # Load event handlers
         for cog in EVENT_HANDLERS:
             cog_name = cog.split('.')[-1]
             discord.client._log.info(f"Loaded Event Handler {cog_name}")
             await self.load_extension(f"{cog}")
+        
+        # Load command cogs dynamically
+        cog_modules = await get_all_cogs()
+        for cog_name in cog_modules:
+            try:
+                await self.load_extension(f"cogs.commands_cogs.{cog_name}")
+                discord.client._log.info(f"Loaded Command {cog_name}")
+            except Exception as e:
+                discord.client._log.error(f"Failed to load Command {cog_name}: {e}")
+        
         print('If syncing commands is taking longer than usual you are being ratelimited')
         await self.tree.sync()
         discord.client._log.info(f"Loaded {len(self.commands)} commands")

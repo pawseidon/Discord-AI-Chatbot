@@ -7,11 +7,24 @@ from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain_core.tools import Tool
-from langchain.pydantic_v1 import BaseModel, Field
-from langchain.tools.tavily_search import TavilySearchResults
+from pydantic import BaseModel, Field
+from langchain_community.tools.tavily_search.tool import TavilySearchResults
 from langchain_community.tools.ddg_search import DuckDuckGoSearchRun
 from bot_utilities.config_loader import config
 from bot_utilities.ai_utils import get_crypto_price, search_internet
+from bot_utilities.memory_utils import ConversationMemory
+from bot_utilities.rag_utils import RAGSystem
+from bot_utilities.token_utils import token_optimizer
+
+# Initialize memory system
+conversation_memory = ConversationMemory()
+server_knowledge_bases = {}
+
+def get_server_rag(server_id: str) -> RAGSystem:
+    """Get or create a RAG system for the server"""
+    if server_id not in server_knowledge_bases:
+        server_knowledge_bases[server_id] = RAGSystem(server_id)
+    return server_knowledge_bases[server_id]
 
 # Initialize the GROQ model
 def get_groq_llm():
@@ -41,6 +54,10 @@ def create_search_tool():
 async def search_internet_sync(query: str) -> str:
     """Perform internet search using DuckDuckGo."""
     result = await search_internet(query)
+    # Optimize the search result to reduce tokens
+    if result:
+        result = token_optimizer.clean_text(result)
+        result = token_optimizer.truncate_text(result, max_tokens=1000)
     return result
 
 # Function to run async functions synchronously (for LangChain tools)
@@ -76,7 +93,36 @@ async def get_crypto_price_sync(crypto_name: str) -> str:
 def get_crypto_price_wrapper(crypto_name: str) -> str:
     return run_async(get_crypto_price_sync(crypto_name))
 
-def create_tools():
+# Knowledge base query tool
+async def query_knowledge_base_sync(server_id: str, query: str) -> str:
+    """Query the server's knowledge base"""
+    # Get the RAG system for this server
+    rag_system = get_server_rag(server_id)
+    
+    # Query the knowledge base
+    results = await rag_system.query(query, k=3)
+    
+    if not results:
+        return "No relevant information found in the knowledge base."
+    
+    # Format results
+    response = "Knowledge base results:\n\n"
+    for i, doc in enumerate(results):
+        # Optimize content to reduce tokens
+        content = token_optimizer.clean_text(doc.page_content)
+        content = token_optimizer.truncate_text(content, max_tokens=500)
+        
+        response += f"[Document {i+1}]:\n{content}\n\n"
+        if "source" in doc.metadata:
+            response += f"Source: {doc.metadata['source']}\n"
+    
+    return response
+
+# Wrapper for knowledge base query tool
+def query_knowledge_base_wrapper(server_id: str, query: str) -> str:
+    return run_async(query_knowledge_base_sync(server_id, query))
+
+def create_tools(server_id=None):
     # Use search tool factory that handles both options
     search_tool = create_search_tool()
     
@@ -101,16 +147,38 @@ def create_tools():
         func=get_crypto_price_wrapper,
     )
     
-    return [search_tool, custom_search_tool, weather_tool, crypto_tool]
+    tools = [search_tool, custom_search_tool, weather_tool, crypto_tool]
+    
+    # Add knowledge base tool if server_id is provided
+    if server_id:
+        kb_tool = Tool(
+            name="KnowledgeBase",
+            description="Query the server's knowledge base for information that has been stored by users. Use this for server-specific information before searching the internet.",
+            func=lambda query: query_knowledge_base_wrapper(server_id, query),
+        )
+        tools.append(kb_tool)
+    
+    return tools
 
 # Create the agent
-def create_agent():
+def create_agent(user_memory="", kb_context="", server_id=None):
     llm = get_groq_llm()
-    tools = create_tools()
+    tools = create_tools(server_id)
     
-    # Define the agent prompt
+    # Optimize memory and KB context to reduce tokens
+    if user_memory:
+        user_memory = token_optimizer.optimize_memory(user_memory, max_tokens=800)
+    
+    if kb_context:
+        kb_context = token_optimizer.truncate_text(kb_context, max_tokens=1000)
+    
+    # Define the agent prompt with memory context and knowledge base context
     prompt = PromptTemplate.from_template(
         """You are an intelligent Discord bot assistant that can help with various tasks.
+        
+        {memory}
+        
+        {kb_context}
         
         You have access to the following tools:
         
@@ -141,21 +209,48 @@ def create_agent():
         agent=agent,
         tools=tools,
         verbose=True,
-        handle_parsing_errors=True
+        handle_parsing_errors=True,
+        max_iterations=5  # Limit iterations to save tokens
     )
     
     return agent_executor
 
 # Function to run the agent (async for Discord)
-async def run_agent(query: str) -> str:
+async def run_agent(query: str, user_id: str = None, channel_id: str = None, server_id: str = None) -> str:
     """Run the agent with the given query"""
-    agent_executor = create_agent()
+    user_memory = ""
+    kb_context = ""
+    
+    # If user_id is provided, get their conversation history
+    if user_id:
+        user_memory = await conversation_memory.format_memory_for_context(user_id)
+    
+    # If server_id is provided, query the knowledge base for relevant context
+    if server_id:
+        rag_system = get_server_rag(server_id)
+        results = await rag_system.query(query, k=2)
+        if results:
+            kb_context = await rag_system.format_results_as_context(results)
+    
+    # Create agent with memory and knowledge base context
+    agent_executor = create_agent(user_memory=user_memory, kb_context=kb_context, server_id=server_id)
     
     # Run the agent in a thread to avoid blocking Discord
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, lambda: agent_executor.invoke({"input": query}))
+    result = await loop.run_in_executor(None, lambda: agent_executor.invoke({
+        "input": query,
+        "memory": user_memory,
+        "kb_context": kb_context
+    }))
     
     # Extract the response
     if "output" in result:
-        return result["output"]
+        response = result["output"]
+        
+        # Store the interaction in memory if user_id and channel_id are provided
+        if user_id and channel_id:
+            await conversation_memory.store_interaction(user_id, channel_id, query, response)
+            
+        return response
+    
     return "I couldn't process that request. Please try again." 

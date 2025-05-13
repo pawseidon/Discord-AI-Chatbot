@@ -8,6 +8,87 @@ INLINE_CODE_REGEX = r"`([^`]+)`"
 URL_REGEX = r"https?://[^\s)>]+"
 BULLET_LIST_REGEX = r"(?:^|\n)[\*\-\+•] .+"
 
+def chunk_message(message, max_length=2000):
+    """
+    Splits a message into chunks that respect Discord's character limit
+    
+    Args:
+        message (str): The message to split
+        max_length (int): Maximum length of each chunk (default: 2000)
+        
+    Returns:
+        list: List of message chunks
+    """
+    # If message is already within limits, return it as a single chunk
+    if len(message) <= max_length:
+        return [message]
+    
+    chunks = []
+    current_chunk = ""
+    
+    # Attempt to split by paragraphs first
+    paragraphs = message.split('\n\n')
+    
+    for paragraph in paragraphs:
+        # If the paragraph is too long, split it further
+        if len(paragraph) > max_length:
+            # Check if it's a code block
+            code_match = re.match(r'```(\w+)?\n([\s\S]+)```', paragraph)
+            if code_match:
+                # Handle long code blocks by preserving syntax
+                lang = code_match.group(1) or ""
+                code = code_match.group(2)
+                
+                # Add any current content as a chunk
+                if current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = ""
+                
+                # Split the code into chunks
+                code_chunks = [code[i:i+max_length-10] for i in range(0, len(code), max_length-10)]
+                for i, code_chunk in enumerate(code_chunks):
+                    if i == 0:
+                        chunks.append(f"```{lang}\n{code_chunk}")
+                    elif i == len(code_chunks) - 1:
+                        chunks.append(f"{code_chunk}```")
+                    else:
+                        chunks.append(code_chunk)
+            else:
+                # Split long text paragraphs by sentences or parts
+                sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+                for sentence in sentences:
+                    if len(current_chunk) + len(sentence) + 2 <= max_length:
+                        if current_chunk:
+                            current_chunk += "\n\n" if not current_chunk.endswith("\n") else "\n"
+                        current_chunk += sentence
+                    else:
+                        # If adding this sentence would exceed max_length
+                        if current_chunk:
+                            chunks.append(current_chunk)
+                            current_chunk = sentence
+                        else:
+                            # Handle extremely long sentences
+                            parts = [sentence[i:i+max_length] for i in range(0, len(sentence), max_length)]
+                            chunks.extend(parts[:-1])
+                            current_chunk = parts[-1]
+        else:
+            # For normal paragraphs
+            if len(current_chunk) + len(paragraph) + 2 <= max_length:
+                if current_chunk:
+                    current_chunk += "\n\n" if not current_chunk.endswith("\n") else "\n"
+                current_chunk += paragraph
+            else:
+                # If adding this paragraph would exceed max_length
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = paragraph
+    
+    # Don't forget the last chunk
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    return chunks
+
 def process_code_block(match):
     """Process a code block match and format it properly"""
     # Different patterns have different group structures
@@ -363,23 +444,23 @@ def format_response_for_discord(response, use_embeds=False, author_name=None, av
         avatar_url (str, optional): URL of the avatar to use in the embed
         
     Returns:
-        tuple: (content, embed) 
-            - content is the text to send
+        tuple: (content, embed, chunks) 
+            - content is the text to send (may be empty if using embed or chunks)
             - embed is an optional Discord embed for rich formatting
+            - chunks is a list of message chunks if the message is too long
     """
     # Format code blocks with proper syntax highlighting
     formatted_response = format_code_blocks(response)
     
-    # Default to text response
-    if not use_embeds:
-        # Check if response is too long
-        if len(formatted_response) > 2000:
-            # If too long, use an embed instead
+    # Check if response is too long
+    if len(formatted_response) > 2000:
+        # For long messages, prefer chunking over embeds for better readability
+        chunks = chunk_message(formatted_response)
+        return "", None, chunks
+    else:
+        # For messages within limits, use embeds if requested
+        if use_embeds:
             embed = create_embed_for_response(formatted_response, author_name, avatar_url)
-            return "", embed
+            return "", embed, None
         else:
-            return formatted_response, None
-    
-    # Use embed if specifically requested
-    embed = create_embed_for_response(formatted_response, author_name, avatar_url)
-    return "", embed 
+            return formatted_response, None, None 

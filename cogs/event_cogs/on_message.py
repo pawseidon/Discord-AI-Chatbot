@@ -10,7 +10,7 @@ from bot_utilities.response_utils import split_response
 from bot_utilities.ai_utils import generate_response, get_crypto_price, text_to_speech 
 from bot_utilities.memory_utils import UserPreferences, process_conversation_history, get_enhanced_instructions
 from bot_utilities.news_utils import get_news_context
-from bot_utilities.formatting_utils import format_response_for_discord, find_and_format_user_mentions
+from bot_utilities.formatting_utils import format_response_for_discord, find_and_format_user_mentions, chunk_message
 from bot_utilities.config_loader import config, load_active_channels
 from ..common import allow_dm, trigger_words, replied_messages, smart_mention, message_history, MAX_HISTORY, instructions
 
@@ -228,7 +228,7 @@ class OnMessage(commands.Cog):
                 formatted_response = accumulated_response
                 
             # Format the response for Discord
-            content, embed = format_response_for_discord(
+            content, embed, chunks = format_response_for_discord(
                 formatted_response,
                 use_embeds,
                 author_name=initial_message.reference.resolved.author.display_name if initial_message.reference and initial_message.reference.resolved else "User",
@@ -239,120 +239,173 @@ class OnMessage(commands.Cog):
             if embed:
                 await initial_message.edit(content=content, embed=embed)
             else:
-                # If the response is too long, split it
-                if isinstance(content, list):
-                    # Delete the initial message and send the long response as multiple messages
-                    await initial_message.delete()
+                # If the response is in chunks, handle them appropriately
+                if chunks:
                     channel = initial_message.channel
-                    first_message = None
-                    for i, chunk in enumerate(content):
-                        if i == 0:
-                            first_message = await channel.send(content=chunk)
-                        else:
-                            await channel.send(content=chunk)
-                    return accumulated_response
-                else:
-                    await initial_message.edit(content=content)
                     
-        except Exception as e:
-            print(f"Error in final streaming message update: {e}")
-            # Try a simpler update as fallback
-            try:
-                await initial_message.edit(content=accumulated_response[:1990] + "..." if len(accumulated_response) > 1990 else accumulated_response)
-            except Exception as e2:
-                print(f"Fallback error: {e2}")
+                    # Update the initial message with the first chunk
+                    await initial_message.edit(content=chunks[0])
+                    
+                    # Send additional chunks as separate messages
+                    for chunk in chunks[1:]:
+                        await channel.send(content=chunk)
+                else:
+                    # Single response within limits
+                    await initial_message.edit(content=content)
+            
+            return accumulated_response
         
-        return accumulated_response
+        except Exception as e:
+            print(f"Error finalizing streamed response: {e}")
+            
+            # Fallback to simple chunking if anything fails
+            try:
+                # If response is still too long, chunk it
+                if len(accumulated_response) > 2000:
+                    chunks = chunk_message(accumulated_response)
+                    
+                    # Update initial message with first chunk
+                    await initial_message.edit(content=chunks[0])
+                    
+                    # Send additional chunks
+                    for chunk in chunks[1:]:
+                        await initial_message.channel.send(content=chunk)
+                else:
+                    # Just update with what we have (truncated if needed)
+                    await initial_message.edit(content=accumulated_response[:2000])
+            except:
+                # Last resort fallback
+                try:
+                    await initial_message.edit(content="I was unable to complete my response. Please try again.")
+                except:
+                    pass
+            
+            return accumulated_response
 
     async def send_response(self, message, response, use_voice=False, create_thread=False):
-        """Send a response, optionally creating a thread for complex responses"""
-        bytes_obj = None
+        """
+        Send the AI response to the user
         
-        # Only process text-to-speech if voice is enabled
-        if use_voice:
-            bytes_obj = await text_to_speech(response)
+        Args:
+            message (discord.Message): The original message
+            response (str): The AI response
+            use_voice (bool): Whether to send a voice response
+            create_thread (bool): Whether to create a thread
             
-        author_voice_channel = None
-        author_member = None
-        
-        # Check if the user is in a voice channel and voice is enabled
-        if use_voice and message.guild:
-            author_member = message.guild.get_member(message.author.id)
-            if author_member and author_member.voice:
-                author_voice_channel = author_member.voice.channel
-
-        # Join voice channel and play synthesized speech if conditions are met
-        if use_voice and bytes_obj and author_voice_channel:
-            try:
-                voice_client = await author_voice_channel.connect()
-                audio_source = discord.FFmpegPCMAudio(bytes_obj)
-                voice_client.play(audio_source)
-                
-                # Disconnect once audio is done playing
-                while voice_client.is_playing():
-                    await asyncio.sleep(1)
-                await voice_client.disconnect()
-            except Exception as e:
-                print(f"Error during voice playback: {e}")
-                
-        # Get user preferences for formatting
-        user_id = str(message.author.id)
-        user_prefs = await UserPreferences.get_user_preferences(user_id)
-        use_embeds = user_prefs.get('use_embeds', False)
-        
-        # Process mentions in the response before formatting
-        formatted_response = find_and_format_user_mentions(message, response, self.bot)
-        
-        # Format the response for Discord
-        content, embed = format_response_for_discord(
-            formatted_response,
-            use_embeds,
-            author_name=message.author.display_name,
-            avatar_url=message.author.avatar.url if message.author.avatar else None
-        )
+        Returns:
+            discord.Message: The first message sent in response
+        """
+        first_message = None
         
         try:
-            if embed:
-                # Send the embed
-                first_message = await message.channel.send(content=content, embed=embed)
-                
-                # Create a thread if requested and we're in a guild channel
-                if create_thread and first_message and hasattr(message.channel, 'create_thread') and not isinstance(message.channel, discord.Thread):
+            # Get user preferences
+            user_prefs = await UserPreferences.get_user_preferences(message.author.id)
+            use_embeds = user_prefs.get('use_embeds', False)
+            
+            # Format response for Discord
+            response = find_and_format_user_mentions(message, response, self.bot)
+            content, embed, chunks = format_response_for_discord(response, use_embeds, 
+                                                        author_name=message.author.display_name, 
+                                                        avatar_url=message.author.avatar.url if message.author.avatar else None)
+            
+            # If the response is in chunks, send each chunk sequentially
+            if chunks:
+                for i, chunk in enumerate(chunks):
+                    if i == 0:
+                        # First message
+                        if use_voice:
+                            # Create voice response in the background
+                            voice_task = asyncio.create_task(self.create_voice_response(response))
+                            
+                        # Send the first message
+                        if embed:
+                            first_message = await message.channel.send(embed=embed)
+                        else:
+                            first_message = await message.channel.send(content=chunk)
+                            
+                        # Create thread if requested and possible
+                        if create_thread and first_message and hasattr(message.channel, 'create_thread'):
+                            try:
+                                thread_name = message.content[:95] + "..." if len(message.content) > 95 else message.content
+                                await first_message.create_thread(name=thread_name)
+                            except Exception as e:
+                                print(f"Error creating thread: {e}")
+                        
+                        # Send voice file if available
+                        if use_voice:
+                            try:
+                                voice_file = await voice_task
+                                if voice_file:
+                                    await message.channel.send(file=discord.File(voice_file, filename="response.mp3"))
+                            except Exception as e:
+                                print(f"Error sending voice response: {e}")
+                    else:
+                        # Additional chunks
+                        await message.channel.send(content=chunk)
+            else:
+                # Single message response
+                if use_voice:
+                    # Create voice response in the background
+                    voice_task = asyncio.create_task(self.create_voice_response(response))
+                    
+                # Send the message
+                if embed:
+                    first_message = await message.channel.send(embed=embed)
+                else:
+                    first_message = await message.channel.send(content=content)
+                    
+                # Create thread if requested and possible
+                if create_thread and first_message and hasattr(message.channel, 'create_thread'):
                     try:
                         thread_name = message.content[:95] + "..." if len(message.content) > 95 else message.content
-                        thread = await first_message.create_thread(name=thread_name)
-                        await thread.send(f"I've created this thread as requested. Feel free to continue our conversation here!")
+                        await first_message.create_thread(name=thread_name)
                     except Exception as e:
                         print(f"Error creating thread: {e}")
                 
-                return first_message
-            else:
-                # Handle content that is too long (should be split into chunks)
-                if isinstance(content, list):
-                    first_message = None
-                    for i, chunk in enumerate(content):
-                        if i == 0:
-                            first_message = await message.channel.send(content=chunk)
-                        else:
-                            await message.channel.send(content=chunk)
-                    
-                    # Create a thread if requested and appropriate
-                    if create_thread and first_message and hasattr(message.channel, 'create_thread') and not isinstance(message.channel, discord.Thread):
-                        try:
-                            thread_name = message.content[:95] + "..." if len(message.content) > 95 else message.content
-                            thread = await first_message.create_thread(name=thread_name)
-                            await thread.send(f"I've created this thread as requested. Feel free to continue our conversation here!")
-                        except Exception as e:
-                            print(f"Error creating thread: {e}")
-                    
-                    return first_message
-                else:
-                    # Send a regular message
-                    return await message.channel.send(content=content)
+                # Send voice file if available
+                if use_voice:
+                    try:
+                        voice_file = await voice_task
+                        if voice_file:
+                            await message.channel.send(file=discord.File(voice_file, filename="response.mp3"))
+                    except Exception as e:
+                        print(f"Error sending voice response: {e}")
+            
+            # Store the message ID for future reference
+            replied_messages[message.id] = first_message.id if first_message else None
+            
+            return first_message
+            
         except Exception as e:
-            print(f"Error sending message: {e}")
-            # Try to send a simplified message if the above fails
-            return await message.channel.send(f"I had trouble formatting my response. Here it is in plain text: {response[:1900]}...")
+            print(f"Error sending response: {e}")
+            # Fallback to plain text if anything fails
+            try:
+                if len(response) > 2000:
+                    chunks = chunk_message(response)
+                    first_message = await message.channel.send(content=chunks[0])
+                    for chunk in chunks[1:]:
+                        await message.channel.send(content=chunk)
+                else:
+                    first_message = await message.channel.send(content=response[:2000])
+                
+                # Store the message ID for future reference
+                replied_messages[message.id] = first_message.id if first_message else None
+                
+                return first_message
+            except:
+                print("Critical error sending any response")
+                return None
+
+    async def create_voice_response(self, text):
+        """Create a voice file from the response text"""
+        try:
+            # Use a simpler first sentence for the voice response
+            first_sentence = re.split(r'(?<=[.!?])\s+', text)[0]
+            voice_text = first_sentence[:500]  # Limit to 500 chars
+            return await text_to_speech(voice_text)
+        except Exception as e:
+            print(f"Error creating voice response: {e}")
+            return None
 
     @commands.Cog.listener()
     async def on_message(self, message):
