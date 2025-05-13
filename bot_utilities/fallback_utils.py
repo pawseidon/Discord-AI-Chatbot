@@ -3,6 +3,7 @@ import json
 import time
 import random
 import sqlite3
+import re
 import discord
 from pathlib import Path
 
@@ -11,10 +12,24 @@ FALLBACK_DIR = "bot_data/fallbacks"
 os.makedirs(FALLBACK_DIR, exist_ok=True)
 FALLBACK_DB = os.path.join(FALLBACK_DIR, "fallback.db")
 
+# Custom REGEXP function for SQLite
+def regexp(pattern, text):
+    try:
+        return re.search(pattern, text, re.IGNORECASE) is not None
+    except Exception:
+        return False
+
 # Create database if it doesn't exist
 def initialize_fallback_db():
     """Initialize the fallback database"""
     conn = sqlite3.connect(FALLBACK_DB)
+    
+    # Register the REGEXP function
+    try:
+        conn.create_function("REGEXP", 2, regexp)
+    except Exception as e:
+        print(f"Warning: Could not register REGEXP function: {e}")
+        
     cursor = conn.cursor()
     
     # Create tables if they don't exist
@@ -85,6 +100,13 @@ async def get_fallback_response(query, username=None):
     
     # Try to find a cached exact response first
     conn = sqlite3.connect(FALLBACK_DB)
+    
+    # Register the REGEXP function
+    try:
+        conn.create_function("REGEXP", 2, regexp)
+    except Exception as e:
+        print(f"Warning: Could not register REGEXP function in query: {e}")
+        
     cursor = conn.cursor()
     
     cursor.execute('SELECT response FROM cached_responses WHERE query_hash = ?', (query_hash,))
@@ -100,9 +122,24 @@ async def get_fallback_response(query, username=None):
         conn.close()
         return cached[0]
     
-    # Try to match against common patterns
-    cursor.execute('SELECT response FROM common_responses WHERE ? REGEXP query_pattern LIMIT 1', (query,))
-    pattern_match = cursor.fetchone()
+    # Try to match against common patterns using REGEXP or fallback to simple matching
+    pattern_match = None
+    try:
+        cursor.execute('SELECT response, query_pattern FROM common_responses WHERE ? REGEXP query_pattern LIMIT 1', (query,))
+        pattern_match = cursor.fetchone()
+    except sqlite3.OperationalError as e:
+        if "no such function: REGEXP" in str(e):
+            # Fallback to simple substring matching if REGEXP is not available
+            print("REGEXP function not available, falling back to simple matching")
+            cursor.execute('SELECT response, query_pattern FROM common_responses')
+            for row in cursor.fetchall():
+                response, pattern = row
+                patterns = pattern.split('|')
+                if any(p in query for p in patterns):
+                    pattern_match = (response, pattern)
+                    break
+        else:
+            raise e
     
     if pattern_match:
         response = pattern_match[0]

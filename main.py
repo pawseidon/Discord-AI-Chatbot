@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from cogs import COMMANDS, EVENT_HANDLERS
 from bot_utilities.config_loader import config
 
-load_dotenv('.env')
+load_dotenv()
 
 class AIBot(commands.AutoShardedBot):
     def __init__(self, *args: Any, **kwargs: Any) -> None:

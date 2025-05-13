@@ -118,6 +118,7 @@ class UserPreferences:
                 "preferred_response_length": "medium",  # short, medium, long
                 "use_voice": False,
                 "use_embeds": False,  # Default to not using embeds for more conversational feel
+                "use_streaming": True,  # Enable streaming responses by default for better UX
                 "last_active": time.time()
             }
     

@@ -7,6 +7,7 @@
 <summary><strong>Features ✨ (Click to expand)</strong></summary>
 
 - [x] Hybrid Command System: Get the best of slash and normal commands. It's like a buffet! ⚙️
+- [x] Streaming Responses: Watch responses appear in real-time as they're generated for a more interactive experience! ⚡
 - [x] Imagine generation: Make your imagination come true for free 🤖
 - [x] Free LLM Model: Enjoy the powerful capabilities of this language model without spending a dime. 🤖
 - [x] Mention Recognition: The bot always responds when you mention it or say its name. It's as attentive as a squirrel spotting a shiny acorn! ⚙️
@@ -15,6 +16,8 @@
 - [x] Opensource models: Leverage the powers opensource models via 🤖
 - [x] Secure Credential Management: Keep your credentials secure using environment variables. 🔑
 - [x] Web Access: Web Access is now available! Unlock a whole new level of awesomeness. 🌐
+- [x] Agent Capabilities: The bot can now perform complex tasks using tools like web search, weather info, and crypto prices! 🧠
+- [x] Task Automation: Get step-by-step guides for automating complex tasks with the new agent system. 🤖
 
 </details>
 
@@ -22,6 +25,11 @@
 <summary><strong>Commands ⚙️⚙️ (Click to expand)</strong></summary>
 
 - [x] `/help`: Get all commands
+- [x] `/preferences`: Customize your experience including response length, voice, embeds, and streaming
+- [x] Use `streaming_enabled` parameter to toggle real-time responses (e.g., `/preferences streaming_enabled:False`)
+- [x] `/agent`: Use AI agent capabilities to perform complex tasks and answer questions using tools
+- [x] `/research`: Research a topic in depth using multiple internet sources
+- [x] `/automate`: Get step-by-step automation guides for complex tasks
 
 Too lazy to list all of em right here
 
@@ -85,6 +93,28 @@ To create a custom personality, follow these steps:
 
 </details>
 
+<details>
+<summary><strong> Agent Capabilities 🧠 (Click to expand)</strong></summary>
+
+The bot now includes powerful agent capabilities powered by LangChain and your GROQ API key:
+
+- **Web Search**: The agent can search the internet for current information using DuckDuckGo
+- **Crypto Prices**: Get real-time cryptocurrency price information
+- **Weather Information**: (Placeholder - can be expanded with a real API)
+- **Research Capability**: Deep dive into topics with multiple sources
+- **Task Automation**: Generate step-by-step guides for complex tasks
+
+Commands to use agent features:
+- `/agent` - General purpose agent for answering questions and performing tasks
+- `/research` - Research a topic in depth using multiple sources
+- `/automate` - Get step-by-step guidance for automating complex tasks
+
+These features use your existing GROQ API key with no additional cost beyond normal API usage.
+
+**Optional**: For enhanced search capabilities, you can add a Tavily API key (not required).
+
+</details>
+
 # Installation steps  🚩
 
 ### Step 1. 🎬 Git clone repository
@@ -121,6 +151,7 @@ python3.10 -m pip install -r requirements.txt
 ```
 DISCORD_TOKEN=YOUR_DISCORD_BOT_TOKEN
 API_KEY=YOUR_GROQ_API_KEY
+TAVILY_API_KEY=YOUR_TAVILY_API_KEY_OPTIONAL
 ```
 ### Step 7. 🚀 Run the bot
 ```

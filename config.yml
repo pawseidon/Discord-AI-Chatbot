@@ -1,17 +1,17 @@
-API_BASE_URL: https://api.groq.com/openai/v1/
+API_BASE_URL: https://api.groq.com/openai/v1
 INTERNET_ACCESS: true # Set to true to enable internet access
 MAX_SEARCH_RESULTS: 6 # Set the maximum search results for internet access DONT SET TOO HIGH
 
 # Local LM Studio model settings
-USE_LOCAL_MODEL: true # Set to true to use local LM Studio model instead of remote API
-LOCAL_MODEL_HOST: 172.29.160.1 # Direct IP address of Windows host running LM Studio
+USE_LOCAL_MODEL: false # Set to true to use local LM Studio model instead of remote API
+LOCAL_MODEL_HOST: 192.168.0.104 # Direct IP address of Windows host running LM Studio
 LOCAL_MODEL_PORT: 1234 # Port where LM Studio is running
 LOCAL_MODEL_ID: mistral-nemo-instruct-2407 # The model ID for the local model
 
 ALLOW_DM: true # Set to true to allow direct messages
 SMART_MENTION: true # Set to true to enable smart mention feature
 
-MODEL_ID: mixtral-8x7b-32768 # Model used for chat completion (for remote API)
+MODEL_ID: meta-llama/llama-4-scout-17b-16e-instruct # Model used for chat completion (for remote API)
 
 MAX_HISTORY: 8 # Set the maximum message history
 

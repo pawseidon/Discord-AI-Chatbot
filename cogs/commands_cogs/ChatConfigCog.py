@@ -45,7 +45,7 @@ class ChatConfigCog(commands.Cog):
         await ctx.send("Message history has been cleared", delete_after=4)
 
     @commands.hybrid_command(name="preferences", description="View or update your personal bot preferences")
-    async def preferences(self, ctx, response_length: str = None, voice_enabled: bool = None, use_embeds: bool = None):
+    async def preferences(self, ctx, response_length: str = None, voice_enabled: bool = None, use_embeds: bool = None, streaming_enabled: bool = None):
         """
         View or update your preferences for the bot
         
@@ -53,9 +53,10 @@ class ChatConfigCog(commands.Cog):
         response_length (str, optional): Set your preferred response length (short, medium, long)
         voice_enabled (bool, optional): Enable or disable voice responses
         use_embeds (bool, optional): Enable or disable rich embed responses
+        streaming_enabled (bool, optional): Enable or disable streaming responses (real-time typing effect)
         """
         # If no parameters provided, just show current preferences
-        if response_length is None and voice_enabled is None and use_embeds is None:
+        if response_length is None and voice_enabled is None and use_embeds is None and streaming_enabled is None:
             prefs = await UserPreferences.get_user_preferences(ctx.author.id)
             
             # Format the preferences into a nice embed
@@ -81,6 +82,12 @@ class ChatConfigCog(commands.Cog):
             embed.add_field(
                 name="Rich Embeds", 
                 value="Yes" if prefs.get("use_embeds", True) else "No",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Streaming Responses", 
+                value="Yes" if prefs.get("use_streaming", True) else "No",
                 inline=True
             )
             
@@ -122,6 +129,13 @@ class ChatConfigCog(commands.Cog):
                 ctx.author.id,
                 "use_embeds",
                 use_embeds
+            )
+            
+        if streaming_enabled is not None:
+            await UserPreferences.update_user_preference(
+                ctx.author.id,
+                "use_streaming",
+                streaming_enabled
             )
             
         await ctx.send("✅ Your preferences have been updated!", delete_after=4)

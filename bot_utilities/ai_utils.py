@@ -102,9 +102,31 @@ def get_local_client():
     )
     
 def get_remote_client():
+    api_key = os.environ.get("API_KEY")
+    print(f"DEBUG - API_KEY found: {bool(api_key)}")
+    print(f"DEBUG - API_KEY length: {len(api_key) if api_key else 0}")
+    print(f"DEBUG - API_KEY first chars: {api_key[:4]}*** last chars: ***{api_key[-4:] if api_key else ''}")
+    
+    if not api_key:
+        print("WARNING: API_KEY not found in environment variables. Cannot use remote API.")
+        return None
+        
+    # Get the base URL and ensure it's properly formatted
+    api_base = config['API_BASE_URL']
+    
+    # Remove trailing slash if present
+    if api_base.endswith('/'):
+        api_base = api_base[:-1]
+    
+    # If it ends with /chat/completions, strip that off
+    if api_base.endswith('/chat/completions'):
+        api_base = api_base.rsplit('/chat/completions', 1)[0]
+        
+    print(f"Connecting to remote API at: {api_base}")
+    
     return AsyncOpenAI(
-        base_url=config['API_BASE_URL'],
-        api_key=os.environ.get("API_KEY"),
+        base_url=api_base,
+        api_key=api_key,
     )
 
 # Create client when needed (not at module import time)
@@ -247,7 +269,61 @@ async def search_internet(query):
         print(f"Search error: {e}")
         return f"Error performing internet search: {e}"
 
-async def generate_response(instructions, history):
+async def stream_response(messages, model, client):
+    """
+    Stream a response from the LLM model
+    
+    Args:
+        messages (list): The message history
+        model (str): The model ID to use
+        client (AsyncOpenAI): The OpenAI client (local or remote)
+        
+    Returns:
+        async generator: An async generator that yields response chunks
+    """
+    try:
+        print(f"Attempting to stream response from model: {model}")
+        stream = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            stream=True,
+        )
+        
+        collected_chunks = []
+        collected_content = ""
+        
+        # Process the stream
+        async for chunk in stream:
+            if not hasattr(chunk.choices[0].delta, 'content'):
+                continue
+                
+            content = chunk.choices[0].delta.content
+            if content:
+                collected_chunks.append(content)
+                collected_content += content
+                yield content
+                
+        # Record successful LLM call
+        record_llm_success()
+        
+        # Cache the successful response
+        if len(messages) > 1:
+            user_message = messages[-1]["content"]
+            cache_successful_response(user_message, collected_content)
+    except Exception as e:
+        print(f"Error streaming from LLM: {e}")
+        print(f"Model: {model}")
+        if hasattr(client, 'base_url'):
+            print(f"Client base URL: {client.base_url}")
+        
+        # Record the failure
+        record_llm_failure()
+        
+        # Yield a fallback message
+        fallback_msg = "I encountered an error connecting to the AI service. Please try again later."
+        yield fallback_msg
+
+async def generate_response(instructions, history, stream=False):
     global local_client, remote_client
     
     # Update timestamp cache to ensure current date/time information
@@ -400,13 +476,26 @@ async def generate_response(instructions, history):
     
     # Prepare to handle potential failures
     try:
-        # Check if using local model
-        if config.get('USE_LOCAL_MODEL', False):
+        # Check if we should use remote API (GROQ) or fall back to local model
+        use_local_model = config.get('USE_LOCAL_MODEL', False)
+        api_key_available = os.environ.get("API_KEY") is not None
+        
+        # If API key isn't available but remote model is requested, fall back to local model
+        if not use_local_model and not api_key_available:
+            print("API_KEY not found in environment but remote model requested. Falling back to local model.")
+            use_local_model = True
+            
+        if use_local_model:
+            print("Using local LLM model as configured in settings")
             if local_client is None:
                 local_client = get_local_client()
                 
+            # If streaming is requested, return a streamed response
+            if stream:
+                return stream_response(messages, config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'), local_client)
+                
             try:
-                print(f"Using local model")
+                print(f"Using local model: {config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407')}")
                 response = await local_client.chat.completions.create(
                     model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
                     messages=messages,
@@ -436,9 +525,55 @@ async def generate_response(instructions, history):
                 return "I encountered an error connecting to the local language model. Please make sure LM Studio is running and accessible from WSL."
         else:
             # Using remote API with tools
+            print("Using remote LLM (GROQ API)")
             if remote_client is None:
                 remote_client = get_remote_client()
                 
+            # Double-check if remote_client was created successfully
+            if remote_client is None:
+                print("Failed to create remote client. Falling back to local model.")
+                if local_client is None:
+                    local_client = get_local_client()
+                
+                # If streaming is requested, return a streamed response
+                if stream:
+                    return stream_response(messages, config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'), local_client)
+                
+                try:
+                    print(f"Using local model as fallback")
+                    response = await local_client.chat.completions.create(
+                        model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
+                        messages=messages,
+                    )
+                    
+                    # Record successful LLM call
+                    record_llm_success()
+                    
+                    # Cache the successful response for future fallback
+                    if history and len(history) > 0:
+                        last_message = history[-1]["content"]
+                        cache_successful_response(last_message, response.choices[0].message.content)
+                        
+                    return response.choices[0].message.content
+                except Exception as e:
+                    print(f"Error with local LLM fallback: {e}")
+                    
+                    # Record the failure
+                    record_llm_failure()
+                    
+                    # If we get here, try using the fallback
+                    if history and len(history) > 0:
+                        last_message = history[-1]["content"]
+                        fallback_response = await get_fallback_response(last_message)
+                        return fallback_response
+                        
+                    return "I encountered an error connecting to both remote and local language models. Please check your configuration."
+            
+            # If streaming is requested and not using tools, return a streamed response
+            if stream and not needs_real_time_info:
+                print(f"Requesting streaming response from GROQ API model: {config['MODEL_ID']}")
+                return stream_response(messages, config['MODEL_ID'], remote_client)
+            
             tools = [
                 {
                     "type": "function",
@@ -460,6 +595,7 @@ async def generate_response(instructions, history):
             ]
             
             try:
+                print(f"Requesting response from GROQ API model: {config['MODEL_ID']}")
                 response = await remote_client.chat.completions.create(
                     model=config['MODEL_ID'],
                     messages=messages,        
@@ -469,11 +605,13 @@ async def generate_response(instructions, history):
                 
                 # Record successful LLM call
                 record_llm_success()
+                print("Successfully received response from GROQ API")
                 
                 response_message = response.choices[0].message
                 tool_calls = response_message.tool_calls
 
                 if tool_calls:
+                    print("Response includes tool calls - executing them")
                     available_functions = {
                         "searchtool": duckduckgotool,
                     }
@@ -494,6 +632,13 @@ async def generate_response(instructions, history):
                                 "content": function_response,
                             }
                         )
+                    
+                    # If streaming is requested for the final response
+                    if stream:
+                        print("Streaming final response after tool calls")
+                        return stream_response(messages, config['MODEL_ID'], remote_client)
+                    
+                    print("Requesting second response after tool calls")
                     second_response = await remote_client.chat.completions.create(
                         model=config['MODEL_ID'],
                         messages=messages
@@ -515,6 +660,9 @@ async def generate_response(instructions, history):
                 
             except Exception as e:
                 print(f"Error with remote LLM: {e}")
+                print(f"API Base URL: {config['API_BASE_URL']}")
+                print(f"API Key available: {api_key_available}")
+                print(f"Model ID: {config['MODEL_ID']}")
                 
                 # Record the failure
                 record_llm_failure()
@@ -635,11 +783,12 @@ You have the following specialized capabilities:
 2. You can get cryptocurrency prices using CRYPTO_PRICE(symbol) in your thinking.
 3. You can get the current time using TIME() in your thinking.
 4. You can tell time differences using TIME_DIFF(time1, time2) in your thinking.
-5. You can mention Discord users, but ONLY when the user explicitly asks you to mention someone. Look for phrases like "mention [user]", "tag [user]", or "ping [user]" in the user's request. When mentioning users:
-   - Use the exact username the user wants to mention
-   - Format as "@username" or "mention username" in your response
+5. You can mention Discord users when the user explicitly asks you to mention someone. Look for phrases like "mention [user]", "tag [user]", or "ping [user]" in the user's request. When mentioning users:
+   - IMPORTANT: When referring to users by name in your response, use the exact username format as requested
+   - Simply write the username directly (like "Hello username" or "@username") 
+   - Do not use any special formatting for mentions - the system will automatically convert them to proper Discord mentions
+   - Never use <@USER_ID> format or any other custom formatting
    - Only mention users when specifically requested to do so
-   - NEVER mention users unless the user has clearly asked you to
 
 For example, if you want to get crypto prices, you can think: "Let me check CRYPTO_PRICE(BTC)"
 Don't include these function calls in your final answer - they're just for your reasoning.

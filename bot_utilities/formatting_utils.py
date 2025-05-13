@@ -169,12 +169,20 @@ def find_and_format_user_mentions(message, response, bot):
     
     user_requested_mention = False
     requested_ids = []
+    requested_usernames = []
     
     # Check if the user's message contains a mention request by username
     for pattern in mention_request_patterns:
-        if re.search(pattern, message.content, re.IGNORECASE):
+        matches = re.finditer(pattern, message.content, re.IGNORECASE)
+        for match in matches:
             user_requested_mention = True
-            break
+            # Extract the username from the match
+            if len(match.groups()) > 2 and '(please|can you|could you)' in pattern:
+                # This is for the longer pattern with 3 capture groups
+                requested_usernames.append(match.group(3))
+            else:
+                # Standard pattern with 1 capture group
+                requested_usernames.append(match.group(1))
     
     # Check if the user's message contains a mention request by user ID
     for pattern in id_request_patterns:
@@ -210,13 +218,6 @@ def find_and_format_user_mentions(message, response, bot):
         except Exception as e:
             print(f"Error processing user ID mention: {e}")
     
-    # Extract all potential usernames to mention from the bot's response
-    mention_patterns = [
-        r'@([a-zA-Z0-9_]+)',                         # @username
-        r'mention\s+(?:user\s+)?([a-zA-Z0-9_]+)',    # mention user username
-        r'(?:tell|ask|ping|notify|tag)\s+([a-zA-Z0-9_]+)'  # tell/ask/ping username
-    ]
-    
     # Get the current channel to check permissions
     channel = message.channel
     
@@ -227,6 +228,71 @@ def find_and_format_user_mentions(message, response, bot):
         permissions = channel.permissions_for(member)
         if permissions.read_messages and not member.bot:
             guild_members.append(member)
+    
+    # Process explicitly requested usernames first
+    for username in requested_usernames:
+        username = username.lower().strip()
+        matched_member = None
+        
+        # First try to find by exact username
+        for member in guild_members:
+            # Check for exact username match
+            if member.name.lower() == username:
+                matched_member = member
+                break
+            # Check for exact nickname match
+            if member.nick and member.nick.lower() == username:
+                matched_member = member
+                break
+            # Check for exact display_name match
+            if member.display_name.lower() == username:
+                matched_member = member
+                break
+        
+        # If no exact match, try partial match
+        if not matched_member:
+            for member in guild_members:
+                # Check if the username contains the search term
+                if username in member.name.lower():
+                    matched_member = member
+                    break
+                # Check if nickname contains the search term
+                if member.nick and username in member.nick.lower():
+                    matched_member = member
+                    break
+                # Check if display_name contains the search term
+                if username in member.display_name.lower():
+                    matched_member = member
+                    break
+        
+        # If we found a matching member, look for any text patterns that might be referring to this user
+        # and replace them with proper mentions
+        if matched_member:
+            mention_str = f"<@{matched_member.id}>"
+            
+            # Enhanced patterns to detect more reference styles in the bot's response
+            user_reference_patterns = [
+                rf'@{re.escape(username)}',                       # @username
+                rf'mention\s+{re.escape(username)}',              # mention username
+                rf'<@{re.escape(username)}>',                     # <@username>
+                rf'<{re.escape(username)}>',                      # <username>
+                rf'(?:tell|ping|tag|notify)\s+{re.escape(username)}',  # tell/ping username
+                rf'(?:hey|hi|hello)\s+{re.escape(username)}',     # hey username
+                rf'{re.escape(username)}(?=\s|,|\.|:|$)',         # username (as a word)
+            ]
+            
+            # Check each pattern and replace with proper mention if found
+            for pattern in user_reference_patterns:
+                response = re.sub(pattern, mention_str, response, flags=re.IGNORECASE)
+            
+            print(f"Converted all references to '{username}' to mention: {mention_str}")
+    
+    # Extract all potential usernames to mention from the bot's response
+    mention_patterns = [
+        r'@([a-zA-Z0-9_]+)',                         # @username
+        r'mention\s+(?:user\s+)?([a-zA-Z0-9_]+)',    # mention user username
+        r'(?:tell|ask|ping|notify|tag)\s+([a-zA-Z0-9_]+)'  # tell/ask/ping username
+    ]
     
     # Process all potential mentions in the response
     for pattern in mention_patterns:
