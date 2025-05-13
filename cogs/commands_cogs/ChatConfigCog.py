@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 
 from ..common import current_language, instructions, instruc_config, message_history
 from bot_utilities.config_loader import load_active_channels
@@ -7,6 +8,7 @@ import json
 from bot_utilities.memory_utils import UserPreferences
 import os
 from bot_utilities.fallback_utils import FALLBACK_DIR
+from bot_utilities.router_compatibility import create_router_adapter
 
 class ChatConfigCog(commands.Cog):
     def __init__(self, bot):
@@ -14,12 +16,12 @@ class ChatConfigCog(commands.Cog):
         self.active_channels = load_active_channels
 
     @commands.hybrid_command(name="toggleactive", description=current_language["toggleactive"])
-    @discord.app_commands.choices(persona=[
-        discord.app_commands.Choice(name=persona.capitalize(), value=persona)
+    @app_commands.choices(persona=[
+        app_commands.Choice(name=persona.capitalize(), value=persona)
         for persona in instructions
     ])
     @commands.has_permissions(administrator=True)
-    async def toggleactive(self, ctx, persona: discord.app_commands.Choice[str] = instructions[instruc_config]):
+    async def toggleactive(self, ctx, persona: app_commands.Choice[str] = instructions[instruc_config]):
         channel_id = f"{ctx.channel.id}"
         active_channels = self.active_channels()
         if channel_id in active_channels:
@@ -159,6 +161,38 @@ class ChatConfigCog(commands.Cog):
                 await ctx.send("⚠️ Offline mode activated. The bot will now use fallback responses without connecting to the language model.", ephemeral=True)
             except Exception as e:
                 await ctx.send(f"❌ Error enabling offline mode: {e}", ephemeral=True)
+
+    @app_commands.command(name="clearcache", description="Clear the bot's response cache")
+    @app_commands.default_permissions(administrator=True)
+    async def clearcache_command(self, interaction: discord.Interaction):
+        """
+        Clear the bot's response cache to free up memory and refresh responses
+        Only available to administrators and the bot owner
+        """
+        # Check if user is the bot owner (Paws)
+        is_owner = str(interaction.user.id) == "818806194608013313"
+        
+        # If not admin or owner, reject
+        if not is_owner and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+            return
+            
+        # Defer response
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Get the response cache from router adapter
+            router = create_router_adapter()
+            
+            # Clear the cache using the invalidate_cache method
+            if hasattr(router, "response_cache") and router.response_cache:
+                cleared_count = await router.invalidate_cache()
+                await interaction.followup.send(f"✅ Successfully cleared {cleared_count} entries from the response cache.", ephemeral=True)
+            else:
+                await interaction.followup.send("❓ No response cache found or it's not enabled.", ephemeral=True)
+                
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error clearing cache: {str(e)}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(ChatConfigCog(bot))

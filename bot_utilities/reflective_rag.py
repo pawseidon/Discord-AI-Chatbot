@@ -1,5 +1,8 @@
 import os
-from typing import List, Dict, Any, Tuple
+import json
+import re
+import time
+from typing import List, Dict, Any, Tuple, Optional
 from langchain_core.documents import Document
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
@@ -7,6 +10,7 @@ from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 from bot_utilities.token_utils import token_optimizer
 from bot_utilities.rag_utils import RAGSystem
+from bot_utilities.ai_utils import get_ai_provider
 
 class RelevanceScore(BaseModel):
     """Model for document relevance scoring"""
@@ -14,7 +18,7 @@ class RelevanceScore(BaseModel):
     reasoning: str = Field(description="Reasoning behind the score")
 
 class SelfReflectiveRAG:
-    """RAG system with self-reflection capabilities for improved retrieval quality"""
+    """Implementation of Self-Reflective RAG for improved response quality"""
     
     def __init__(self, server_id: str, api_key: str = None, model_name: str = "meta-llama/llama-4-scout-17b-16e-instruct"):
         """Initialize the self-reflective RAG system"""
@@ -30,6 +34,8 @@ class SelfReflectiveRAG:
         )
         # Prepare the output parser
         self.parser = PydanticOutputParser(pydantic_object=RelevanceScore)
+        self.reflection_log = []
+        self.quality_metrics = ["relevance", "accuracy", "completeness", "consistency", "helpfulness"]
         
     async def evaluate_document_relevance(self, query: str, document: Document) -> RelevanceScore:
         """Evaluate the relevance of a document to the query"""
@@ -130,4 +136,204 @@ class SelfReflectiveRAG:
             # Add a brief note about why this document was considered relevant
             context += f"Relevance: {score.reasoning}\n\n"
         
-        return context 
+        return context
+    
+    async def reflect_on_response(self, query: str, response: str, reference_data: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Evaluate a response against quality metrics and provide reflection
+        
+        Args:
+            query: The original user query
+            response: The response to evaluate
+            reference_data: Optional reference data to check against
+            
+        Returns:
+            Dict containing reflection results and improvement suggestions
+        """
+        # Get AI provider for evaluation
+        ai_provider = await get_ai_provider()
+        
+        # Create evaluation prompt
+        prompt = f"""Evaluate this response to the following query:
+        
+Query: {query}
+
+Response: {response}
+
+Analyze this response and evaluate it on the following criteria (score 1-10):
+1. Relevance: How well does the response address the query?
+2. Accuracy: Are the facts and information correct?
+3. Completeness: Does it fully address all aspects of the query?
+4. Consistency: Is the response internally consistent?
+5. Helpfulness: Is the response actually helpful to the user?
+
+For each criterion, provide:
+- Score (1-10)
+- Brief explanation
+- Specific suggestion for improvement
+
+Finally, provide an overall assessment and concrete recommendations for how to improve similar responses in the future.
+"""
+
+        try:
+            # Get evaluation
+            result = await ai_provider.async_call(prompt, temperature=0.3)
+            
+            # Parse evaluation results
+            parsed_result = self._parse_evaluation(result)
+            
+            # Log the reflection
+            reflection_entry = {
+                "timestamp": time.time(),
+                "query": query,
+                "response": response,
+                "evaluation": parsed_result,
+                "has_reference": reference_data is not None
+            }
+            self.reflection_log.append(reflection_entry)
+            
+            return parsed_result
+            
+        except Exception as e:
+            print(f"Error during self-reflection: {e}")
+            return {
+                "error": str(e),
+                "overall_score": 0,
+                "improvements": ["Unable to perform self-reflection due to an error."]
+            }
+    
+    def _parse_evaluation(self, evaluation_text: str) -> Dict[str, Any]:
+        """Parse the evaluation text into structured data"""
+        metrics = {}
+        improvements = []
+        
+        # Extract scores using regex
+        score_pattern = r'(\d+)\/10|score:\s*(\d+)|rating:\s*(\d+)'
+        
+        for metric in self.quality_metrics:
+            # Look for sections about each metric
+            metric_pattern = re.compile(
+                rf'{metric}.*?(?:rating|score).*?({score_pattern})', 
+                re.IGNORECASE | re.DOTALL
+            )
+            match = metric_pattern.search(evaluation_text)
+            
+            if match:
+                # Try to extract numeric score
+                score_text = match.group(1)
+                scores = re.findall(r'\d+', score_text)
+                if scores:
+                    metrics[metric] = int(scores[0])
+                else:
+                    metrics[metric] = 5  # Default middle score if parsing fails
+            else:
+                metrics[metric] = 5  # Default if metric not found
+        
+        # Extract overall assessment
+        overall_pattern = re.compile(
+            r'overall.*?assessment.*?(.*?)(?=recommendation|improvement|$)', 
+            re.IGNORECASE | re.DOTALL
+        )
+        overall_match = overall_pattern.search(evaluation_text)
+        overall_assessment = overall_match.group(1).strip() if overall_match else "No overall assessment provided."
+        
+        # Extract recommendations/improvements
+        improvements_pattern = re.compile(
+            r'(?:recommendation|improvement|suggestion)s?:?\s*(.*?)(?=\n\n|$)', 
+            re.IGNORECASE | re.DOTALL
+        )
+        improvements_match = improvements_pattern.search(evaluation_text)
+        
+        if improvements_match:
+            # Split by bullet points or numbers
+            improvement_text = improvements_match.group(1)
+            improvement_items = re.split(r'\n\s*[-•*]|\n\s*\d+\.', improvement_text)
+            improvements = [item.strip() for item in improvement_items if item.strip()]
+        
+        # Calculate overall score
+        overall_score = sum(metrics.values()) / len(metrics) if metrics else 0
+        
+        return {
+            "metrics": metrics,
+            "overall_score": overall_score,
+            "overall_assessment": overall_assessment,
+            "improvements": improvements
+        }
+    
+    async def improve_response(self, query: str, original_response: str, evaluation: Dict[str, Any]) -> str:
+        """
+        Generate an improved response based on self-reflection
+        
+        Args:
+            query: The original query
+            original_response: The original response
+            evaluation: The evaluation results
+            
+        Returns:
+            An improved response
+        """
+        if "improvements" not in evaluation or not evaluation["improvements"]:
+            return original_response
+            
+        # Get AI provider
+        ai_provider = await get_ai_provider()
+        
+        # Create improvement prompt
+        improvements_text = "\n".join([f"- {imp}" for imp in evaluation["improvements"]])
+        
+        prompt = f"""Here is a query and an initial response that needs improvement:
+
+Query: {query}
+
+Initial Response: {original_response}
+
+Please improve this response based on the following suggestions:
+{improvements_text}
+
+Generate a new, improved response that addresses these suggestions while maintaining a natural, conversational tone.
+"""
+
+        try:
+            # Get improved response
+            improved_response = await ai_provider.async_call(prompt, temperature=0.4)
+            return improved_response
+        except Exception as e:
+            print(f"Error generating improved response: {e}")
+            return original_response
+    
+    def get_recent_reflections(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get the most recent reflection entries"""
+        return self.reflection_log[-limit:] if self.reflection_log else []
+        
+    def get_average_scores(self) -> Dict[str, float]:
+        """Get average scores across all metrics"""
+        if not self.reflection_log:
+            return {metric: 0.0 for metric in self.quality_metrics}
+            
+        totals = {metric: 0.0 for metric in self.quality_metrics}
+        count = 0
+        
+        for entry in self.reflection_log:
+            if "evaluation" in entry and "metrics" in entry["evaluation"]:
+                metrics = entry["evaluation"]["metrics"]
+                for metric in self.quality_metrics:
+                    if metric in metrics:
+                        totals[metric] += metrics[metric]
+                count += 1
+        
+        if count == 0:
+            return {metric: 0.0 for metric in self.quality_metrics}
+            
+        return {metric: totals[metric] / count for metric in self.quality_metrics}
+
+def create_reflective_rag(server_id: str = "global"):
+    """
+    Factory function to create a self-reflective RAG instance
+    
+    Args:
+        server_id: The server ID to associate with this RAG instance, defaults to "global"
+        
+    Returns:
+        SelfReflectiveRAG: A configured reflective RAG instance
+    """
+    return SelfReflectiveRAG(server_id=server_id) 

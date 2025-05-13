@@ -43,3 +43,13 @@ def load_active_channels() -> dict:
         with open("channels.json", "r", encoding='utf-8') as f:
             active_channels = json.load(f)
     return active_channels
+
+# Helper functions for getting and setting config values
+def get_config(key, default=None):
+    """Get a configuration value with an optional default"""
+    return config.get(key, default)
+
+def set_config(key, value):
+    """Update a configuration value in memory (not persisted to file)"""
+    config[key] = value
+    return value

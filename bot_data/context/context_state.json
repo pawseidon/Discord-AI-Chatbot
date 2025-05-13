@@ -1,0 +1,714 @@
+{
+  "conversations": {
+    "818806194608013313:1363293828328591390": {
+      "user_id": "818806194608013313",
+      "channel_id": "1363293828328591390",
+      "thread_id": null,
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hey Hand!",
+          "timestamp": 1747148957.6423125,
+          "message_id": "1371866894683865089",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand!",
+          "timestamp": 1747148958.1793754,
+          "message_id": "session-1747148958.1793756"
+        },
+        {
+          "role": "assistant",
+          "content": "I apologize, but I encountered an error while processing your query. Please try again or rephrase your question.",
+          "timestamp": 1747148958.1827693,
+          "method": "default",
+          "in_response_to": "Hey Hand!"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I apologize, but I encountered an error while processing your query. Please try again or rephrase your question.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "error": "module 'datetime' has no attribute 'now'",
+              "latency": 9.703636169433594e-05,
+              "total_latency": 0.00028443336486816406,
+              "enhanced_context_used": true
+            }
+          ],
+          "timestamp": 1747148958.1849298,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand!",
+          "timestamp": 1747149850.038667,
+          "message_id": "1371870645071384626",
+          "is_from_master": true
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true
+            }
+          ],
+          "timestamp": 1747149850.506804,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Hello Hand!",
+          "timestamp": 1747149857.9181278,
+          "message_id": "1371870675198935080",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "Hello Hand!",
+          "timestamp": 1747149858.3584197,
+          "message_id": "session-1747149858.3584201"
+        },
+        {
+          "role": "assistant",
+          "content": "I'm ready to help. What's on your mind, Paws? Need some tech insights or perhaps some news updates?",
+          "timestamp": 1747149859.0962791,
+          "method": "default",
+          "in_response_to": "Hello Hand!"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm ready to help. What's on your mind, Paws? Need some tech insights or perhaps some news updates?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.7341523170471191,
+              "total_latency": 0.7343156337738037,
+              "enhanced_context_used": true
+            }
+          ],
+          "timestamp": 1747149859.0968595,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand!",
+          "timestamp": 1747149872.783776,
+          "message_id": "1371870731696210032",
+          "is_from_master": true
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true
+            }
+          ],
+          "timestamp": 1747149873.247015,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "/clearcache",
+          "timestamp": 1747149882.3342571,
+          "message_id": "1371870779503022100",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "/clearcache",
+          "timestamp": 1747149882.9353018,
+          "message_id": "session-1747149882.935303"
+        },
+        {
+          "role": "assistant",
+          "content": "I'm here to help, Master Paws. What's on your mind today? Need some assistance with a technical query or perhaps some insight into the latest tech news or bitcoin updates?",
+          "timestamp": 1747149883.2769172,
+          "method": "default",
+          "in_response_to": "/clearcache"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm here to help, Master Paws. What's on your mind today? Need some assistance with a technical query or perhaps some insight into the latest tech news or bitcoin updates?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.3397090435028076,
+              "total_latency": 0.33983516693115234,
+              "enhanced_context_used": true
+            }
+          ],
+          "timestamp": 1747149883.2775788,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand!",
+          "timestamp": 1747150313.8727605,
+          "message_id": "1371872581786800181",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand!",
+          "timestamp": 1747150314.3579667,
+          "message_id": "session-1747150314.357967"
+        },
+        {
+          "role": "assistant",
+          "content": "I'm experiencing technical difficulties. Please try again later.",
+          "timestamp": 1747150314.3587685,
+          "method": "default",
+          "in_response_to": "Hey Hand!"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true,
+              "from_cache": true,
+              "similarity": 1.0
+            }
+          ],
+          "timestamp": 1747150314.3605242,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand",
+          "timestamp": 1747150320.4371238,
+          "message_id": "1371872606764011601",
+          "is_from_master": true
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true,
+              "from_cache": true,
+              "similarity": 1.0
+            }
+          ],
+          "timestamp": 1747150320.993025,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Hello Hand",
+          "timestamp": 1747150324.326381,
+          "message_id": "1371872632219242668",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "Hello Hand",
+          "timestamp": 1747150324.7832637,
+          "message_id": "session-1747150324.783264"
+        },
+        {
+          "role": "assistant",
+          "content": "I'm ready to help. What's on your mind, Paws? Need some tech insights or perhaps some news updates?",
+          "timestamp": 1747150324.7841682,
+          "method": "default",
+          "in_response_to": "Hello Hand"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm ready to help. What's on your mind, Paws? Need some tech insights or perhaps some news updates?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.7341523170471191,
+              "total_latency": 0.7343156337738037,
+              "enhanced_context_used": true,
+              "from_cache": true,
+              "similarity": 1.0
+            }
+          ],
+          "timestamp": 1747150324.7846966,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Help me breaking down the India and Pakistan recent conflict",
+          "timestamp": 1747150350.490466,
+          "message_id": "1371872743829799022",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "Help me breaking down the India and Pakistan recent conflict",
+          "timestamp": 1747150351.0930316,
+          "message_id": "session-1747150351.0930321"
+        },
+        {
+          "role": "assistant",
+          "content": "I'm ready to assist you, Master Paws. What's on your mind today? Need help with some tech wizardry or perhaps an update on the latest news or bitcoin trends?",
+          "timestamp": 1747150351.5092497,
+          "method": "default",
+          "in_response_to": "Help me breaking down the India and Pakistan recent conflict"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm ready to assist you, Master Paws. What's on your mind today? Need help with some tech wizardry or perhaps an update on the latest news or bitcoin trends?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.4143192768096924,
+              "total_latency": 0.41459131240844727,
+              "enhanced_context_used": true
+            }
+          ],
+          "timestamp": 1747150351.509686,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand, hello!",
+          "timestamp": 1747150923.8938847,
+          "message_id": "1371875143541981196",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand, hello!",
+          "timestamp": 1747150924.4009483,
+          "message_id": "session-1747150924.4009488"
+        },
+        {
+          "role": "assistant",
+          "content": "I'm ready to assist you, Master Paws. What's on your mind today? Need help with something tech-related, or perhaps a query about the latest news or bitcoin?",
+          "timestamp": 1747150924.9066586,
+          "method": "default",
+          "in_response_to": "Hey Hand, hello!"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm ready to assist you, Master Paws. What's on your mind today? Need help with something tech-related, or perhaps a query about the latest news or bitcoin?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.5018553733825684,
+              "total_latency": 0.5020132064819336,
+              "enhanced_context_used": true
+            }
+          ],
+          "timestamp": 1747150924.9075487,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand",
+          "timestamp": 1747151101.6318965,
+          "message_id": "1371875888127541248",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "Hey Hand",
+          "timestamp": 1747151102.314902,
+          "message_id": "session-1747151102.3149028"
+        },
+        {
+          "role": "assistant",
+          "content": "I'm experiencing technical difficulties. Please try again later.",
+          "timestamp": 1747151102.3177073,
+          "method": "default",
+          "in_response_to": "Hey Hand"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true,
+              "from_cache": true,
+              "similarity": 1.0
+            }
+          ],
+          "timestamp": 1747151102.3184445,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Break down the India Pakistan recent conflict please",
+          "timestamp": 1747151118.1630423,
+          "message_id": "1371875962345619516",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "Break down the India Pakistan recent conflict please",
+          "timestamp": 1747151118.9784286,
+          "message_id": "session-1747151118.978429"
+        },
+        {
+          "role": "assistant",
+          "content": "I'm ready to assist. What's on your mind, Paws? Need some help or just want to geek out over some tech or perhaps the latest bitcoin news?",
+          "timestamp": 1747151120.2312338,
+          "method": "default",
+          "in_response_to": "Break down the India Pakistan recent conflict please"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm ready to assist. What's on your mind, Paws? Need some help or just want to geek out over some tech or perhaps the latest bitcoin news?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 1.2507877349853516,
+              "total_latency": 1.2509381771087646,
+              "enhanced_context_used": true
+            }
+          ],
+          "timestamp": 1747151120.2318761,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        },
+        {
+          "role": "user",
+          "content": "Ayooo what's up Hand",
+          "timestamp": 1747151966.7063985,
+          "message_id": "1371879522462335016",
+          "is_from_master": true
+        },
+        {
+          "role": "user",
+          "content": "Ayooo what's up Hand",
+          "timestamp": 1747151967.2448053,
+          "message_id": "session-1747151967.2448068"
+        },
+        {
+          "role": "assistant",
+          "content": "I'm ready to assist you, Master Paws. What's on your mind today? Need help with something tech-related, or perhaps a query about the latest news or bitcoin?",
+          "timestamp": 1747151967.9324915,
+          "method": "default",
+          "in_response_to": "Ayooo what's up Hand"
+        },
+        {
+          "role": "assistant",
+          "content": [
+            "I'm ready to assist you, Master Paws. What's on your mind today? Need help with something tech-related, or perhaps a query about the latest news or bitcoin?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.6827647686004639,
+              "total_latency": 0.6834619045257568,
+              "enhanced_context_used": true
+            }
+          ],
+          "timestamp": 1747151967.933361,
+          "type": "sequential_thinking_response",
+          "thinking_style": "sequential"
+        }
+      ],
+      "last_active": 1747151967.9333663,
+      "context_map": {},
+      "thinking_history": [
+        {
+          "problem": "Hey Hand!",
+          "solution": [
+            "I apologize, but I encountered an error while processing your query. Please try again or rephrase your question.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "error": "module 'datetime' has no attribute 'now'",
+              "latency": 9.703636169433594e-05,
+              "total_latency": 0.00028443336486816406,
+              "enhanced_context_used": true
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747148958.1849036,
+          "success": true
+        },
+        {
+          "problem": "Hey Hand!",
+          "solution": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747149850.5067856,
+          "success": true
+        },
+        {
+          "problem": "Hello Hand!",
+          "solution": [
+            "I'm ready to help. What's on your mind, Paws? Need some tech insights or perhaps some news updates?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.7341523170471191,
+              "total_latency": 0.7343156337738037,
+              "enhanced_context_used": true
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747149859.0968225,
+          "success": true
+        },
+        {
+          "problem": "Hey Hand!",
+          "solution": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747149873.2469847,
+          "success": true
+        },
+        {
+          "problem": "/clearcache",
+          "solution": [
+            "I'm here to help, Master Paws. What's on your mind today? Need some assistance with a technical query or perhaps some insight into the latest tech news or bitcoin updates?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.3397090435028076,
+              "total_latency": 0.33983516693115234,
+              "enhanced_context_used": true
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747149883.2775652,
+          "success": true
+        },
+        {
+          "problem": "Hey Hand!",
+          "solution": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true,
+              "from_cache": true,
+              "similarity": 1.0
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747150314.3604906,
+          "success": true
+        },
+        {
+          "problem": "Hey Hand",
+          "solution": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true,
+              "from_cache": true,
+              "similarity": 1.0
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747150320.9930127,
+          "success": true
+        },
+        {
+          "problem": "Hello Hand",
+          "solution": [
+            "I'm ready to help. What's on your mind, Paws? Need some tech insights or perhaps some news updates?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.7341523170471191,
+              "total_latency": 0.7343156337738037,
+              "enhanced_context_used": true,
+              "from_cache": true,
+              "similarity": 1.0
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747150324.784685,
+          "success": true
+        },
+        {
+          "problem": "Help me breaking down the India and Pakistan recent conflict",
+          "solution": [
+            "I'm ready to assist you, Master Paws. What's on your mind today? Need help with some tech wizardry or perhaps an update on the latest news or bitcoin trends?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.4143192768096924,
+              "total_latency": 0.41459131240844727,
+              "enhanced_context_used": true
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747150351.5096724,
+          "success": true
+        },
+        {
+          "problem": "Hey Hand, hello!",
+          "solution": [
+            "I'm ready to assist you, Master Paws. What's on your mind today? Need help with something tech-related, or perhaps a query about the latest news or bitcoin?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.5018553733825684,
+              "total_latency": 0.5020132064819336,
+              "enhanced_context_used": true
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747150924.9075325,
+          "success": true
+        },
+        {
+          "problem": "Hey Hand",
+          "solution": [
+            "I'm experiencing technical difficulties. Please try again later.",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.00023794174194335938,
+              "total_latency": 0.0004093647003173828,
+              "enhanced_context_used": true,
+              "from_cache": true,
+              "similarity": 1.0
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747151102.3184245,
+          "success": true
+        },
+        {
+          "problem": "Break down the India Pakistan recent conflict please",
+          "solution": [
+            "I'm ready to assist. What's on your mind, Paws? Need some help or just want to geek out over some tech or perhaps the latest bitcoin news?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 1.2507877349853516,
+              "total_latency": 1.2509381771087646,
+              "enhanced_context_used": true
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747151120.231857,
+          "success": true
+        },
+        {
+          "problem": "Ayooo what's up Hand",
+          "solution": [
+            "I'm ready to assist you, Master Paws. What's on your mind today? Need help with something tech-related, or perhaps a query about the latest news or bitcoin?",
+            {
+              "method": "default",
+              "method_name": "Standard Processing",
+              "method_emoji": "\ud83d\udcac",
+              "latency": 0.6827647686004639,
+              "total_latency": 0.6834619045257568,
+              "enhanced_context_used": true
+            }
+          ],
+          "prompt_style": "sequential",
+          "is_complex": false,
+          "timestamp": 1747151967.933209,
+          "success": true
+        }
+      ],
+      "related_threads": [],
+      "summary": "",
+      "topic": ""
+    }
+  },
+  "thread_map": {},
+  "timestamp": 1747152299.278448
+}

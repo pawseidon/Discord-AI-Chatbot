@@ -2,9 +2,12 @@ import json
 import os
 import time
 import asyncio
+import hashlib
+import uuid
+import discord
 from openai import AsyncOpenAI
-from bot_utilities.config_loader import config
-from bot_utilities.ai_utils import get_local_client, get_remote_client
+from bot_utilities.config_loader import config, load_instructions
+from bot_utilities.ai_utils import get_local_client, get_remote_client, is_bot_master
 from datetime import datetime
 from typing import Dict, List, Any
 
@@ -210,29 +213,36 @@ async def process_conversation_history(message_history, user_id, channel_id):
     
     return conversation
 
-def get_enhanced_instructions(instructions, user_id):
+async def get_enhanced_instructions(guild_id=None, user_id=None):
     """
     Enhance instructions with user preferences and personalization
     
     Args:
-        instructions (str): The base instructions
+        guild_id (str): The guild ID to load appropriate instructions
         user_id (str): The user's ID
     
     Returns:
         str: Enhanced instructions with user preferences
     """
-    # This will be run synchronously, so we use a helper function to load preferences
-    def load_prefs():
-        pref_file = os.path.join(USER_PREFS_DIR, f"{user_id}.json")
-        if os.path.exists(pref_file):
-            try:
-                with open(pref_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except:
-                return {}
-        return {}
+    # Load basic instructions based on guild_id
+    instructions_dict = load_instructions()
     
-    preferences = load_prefs()
+    # Extract the appropriate instruction text
+    # If instructions is a dictionary with 'hand' key, use that, or use a default instruction
+    instruction_text = ""
+    default_instruction = config.get('DEFAULT_INSTRUCTION', 'hand')
+    
+    if isinstance(instructions_dict, dict):
+        instruction_text = instructions_dict.get(default_instruction, "You are a helpful AI assistant.")
+    else:
+        instruction_text = str(instructions_dict)
+    
+    # If no user ID provided, return the basic instructions
+    if not user_id:
+        return instruction_text
+    
+    # Get user preferences asynchronously
+    preferences = await UserPreferences.get_user_preferences(user_id)
     
     # If we have preferences, enhance the instructions
     if preferences:
@@ -249,11 +259,15 @@ def get_enhanced_instructions(instructions, user_id):
             personalization += "\n- The user prefers shorter, concise responses. Be direct and to the point."
         elif response_length == "long":
             personalization += "\n- The user prefers detailed explanations. You can be more thorough in your responses."
+
+        # Add specific instructions for bot owner/master
+        if await is_bot_master(user_id):
+            personalization += "\n- This user is the bot's creator (Paws). Provide more technical and detailed responses."
         
-        return instructions + personalization
+        return instruction_text + personalization
     
     # If no preferences, return the original instructions
-    return instructions
+    return instruction_text
 
 class ConversationMemory:
     def __init__(self, storage_dir='bot_data/memories'):

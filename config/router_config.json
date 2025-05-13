@@ -1,0 +1,62 @@
+{
+  "complexity_threshold": 0.65,
+  "verification_threshold": 0.70,
+  "cache_enabled": true,
+  "methods": {
+    "sequential": true,
+    "react": true,
+    "verification": true,
+    "speculative_rag": false,
+    "reflective_rag": false,
+    "default": true
+  },
+  "parallel_evaluation": false,
+  "similarity_threshold": 0.85,
+  "cache_ttl": 86400,
+  "response_format": {
+    "include_method_info": true,
+    "include_thinking_steps": false,
+    "include_reasoning_traces": false,
+    "max_thinking_steps": 5
+  },
+  "temperature": {
+    "analysis": 0.1,
+    "sequential": 0.3,
+    "react": 0.5,
+    "verification": 0.1,
+    "speculative_rag": 0.4,
+    "reflective_rag": 0.3,
+    "default": 0.7
+  },
+  "prompt_templates": {
+    "analysis": "Analyze the following query to determine how to process it:\n\nQuery: \"{query}\"\n\nDetermine:\n1. Is this a factual query that requires verification?\n2. Is this a complex query that requires step-by-step reasoning?\n3. Does this query need external tools or APIs to answer properly?\n4. Does this query need web search or information retrieval?\n5. On a scale of 0.0-1.0, how complex is this query?\n\nProvide your analysis as a JSON object with the following fields:\n- is_factual: boolean\n- is_complex: boolean\n- needs_verification: boolean\n- needs_tools: boolean\n- needs_search: boolean\n- complexity_score: float (0.0-1.0)\n- recommended_method: string (one of: \"default\", \"sequential\", \"react\", \"verification\", \"speculative_rag\", \"reflective_rag\")\n- reasoning: string (brief explanation)\n\nJSON:",
+    "sequential_system": "You are a helpful assistant that thinks step-by-step to solve complex problems.",
+    "react_system": "You are a powerful reasoning agent that can think through problems by alternating between reasoning and acting.",
+    "verification_system": "You are an assistant focused on factual accuracy. You verify information through a multi-step verification process.",
+    "speculative_rag_system": "You are an assistant that uses speculative generation and retrieval to find information for complex queries.",
+    "reflective_rag_system": "You are an assistant that uses self-reflection to improve the quality and relevance of retrieved information.",
+    "default_system": "You are a helpful, harmless, and honest assistant."
+  },
+  "state_management": {
+    "session_ttl": 3600,
+    "max_history_length": 50,
+    "summarize_history_threshold": 20,
+    "auto_summarize": true
+  },
+  "fallback_behavior": {
+    "enabled": true,
+    "max_retries": 3,
+    "fallback_sequence": ["default", "sequential", "react"],
+    "error_messages": {
+      "rate_limit": "I'm currently experiencing high demand. Please try again in a moment.",
+      "timeout": "I wasn't able to respond quickly enough. Could you try simplifying your question?",
+      "generic": "I apologize, but I encountered an error processing your request. Please try again or rephrase your query."
+    }
+  },
+  "metrics": {
+    "enabled": true,
+    "log_level": "info",
+    "sample_rate": 1.0,
+    "detailed_logging": false
+  }
+} 

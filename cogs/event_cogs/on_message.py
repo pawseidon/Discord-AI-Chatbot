@@ -1,31 +1,45 @@
-import discord
-from discord.ext import commands
-import asyncio
-import json
-import os
-import re
+import sys
 import time
 import traceback
+import discord
+import asyncio
+import json
 import random
-import aiohttp
-import io
-from PIL import Image
-from typing import List, Dict, Any, Optional, Union, Tuple
+import datetime
 import logging
-import sys
+import re
+import os
+import inspect
+from typing import Dict, List, Any, Tuple, Optional, Union
+from discord.ext import commands
 
 from bot_utilities.response_utils import split_response
 from bot_utilities.ai_utils import generate_response, get_crypto_price, text_to_speech, get_bot_names_and_triggers
+from bot_utilities.ai_utils import should_use_sequential_thinking, is_bot_master, add_owner_context
 from bot_utilities.memory_utils import UserPreferences, process_conversation_history, get_enhanced_instructions
 from bot_utilities.news_utils import get_news_context
 from bot_utilities.formatting_utils import format_response_for_discord, find_and_format_user_mentions, chunk_message
-from bot_utilities.config_loader import config, load_active_channels
+from bot_utilities.config_loader import config, load_current_language, load_instructions
 from bot_utilities.multimodal_utils import ImageProcessor, ImageGenerator
 from bot_utilities.sentiment_utils import SentimentAnalyzer
 from bot_utilities.agent_utils import run_agent
-from ..common import allow_dm, smart_mention, MAX_HISTORY, instructions, message_history
-from bot_utilities.mcp_utils import MCPToolsManager
+from bot_utilities.reasoning_router import create_reasoning_router
+from bot_utilities.router_compatibility import create_router_adapter
 from bot_utilities.sequential_thinking import create_sequential_thinking
+from bot_utilities.context_manager import get_context_manager, start_context_manager_tasks
+from ..common import message_history, replied_messages, active_channels, server_settings, smart_mention
+from bot_utilities.mcp_utils import MCPToolsManager
+
+# Get config values
+MAX_HISTORY = config.get('MAX_HISTORY', 8)
+prevent_nsfw = config.get('AI_NSFW_CONTENT_FILTER', True)
+blacklisted_words = config.get('BLACKLIST_WORDS', [])
+allow_dm = config.get('ALLOW_DM', True)  # Get DM setting from config
+
+# UX Configuration
+USE_EMBEDS = config.get('USE_EMBEDS', False)  # Whether to use embeds for responses
+SHOW_THINKING_INDICATOR = config.get('SHOW_THINKING_INDICATOR', True)  # Show typing/thinking indicators
+USE_MARKDOWN_FORMATTING = config.get('USE_MARKDOWN_FORMATTING', True)  # Use Discord markdown for formatting
 
 # Configure logging
 logging.basicConfig(
@@ -37,14 +51,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger('on_message')
 
+# Helper function to check if a channel is in the active channels list
+def is_active_channel(channel, guild_id):
+    """Check if a channel is in the active channels list for the guild"""
+    guild_id = str(guild_id)
+    channel_id = str(channel.id)
+    
+    # If the guild is not in active_channels, all channels are active by default
+    if guild_id not in active_channels:
+        return True
+    
+    # If the guild has no specific channels listed, all channels are active
+    if not active_channels[guild_id]:
+        return True
+    
+    # Check if this channel is in the active list
+    return channel_id in active_channels[guild_id]
+
 class OnMessage(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.active_channels = load_active_channels
-        self.instructions = instructions
+        self.active_channels = active_channels
+        self.instructions = load_instructions()  # Load instructions directly
         self.thread_contexts = {}  # Store parent message context for threads
         self.STREAM_UPDATE_INTERVAL = 0.5  # Update streaming messages every 0.5 seconds
-        self.replied_messages = {}  # Store message IDs for reference
+        self.replied_messages = replied_messages
         
         # Initialize processors for various capabilities
         self.image_processor = ImageProcessor()
@@ -53,6 +84,77 @@ class OnMessage(commands.Cog):
         self.mcp_manager = MCPToolsManager()
         # Initialize sequential thinking
         self.sequential_thinking = create_sequential_thinking(llm_provider=None)
+        
+        # Start context manager tasks
+        asyncio.create_task(self.start_context_manager())
+
+    async def start_context_manager(self):
+        """Start the context manager background tasks"""
+        await start_context_manager_tasks()
+        # Initialize AI provider for sequential thinking
+        await self._init_sequential_thinking()
+
+    async def _init_sequential_thinking(self):
+        """Initialize the sequential thinking AI provider"""
+        try:
+            from bot_utilities.ai_utils import get_ai_provider
+            provider = await get_ai_provider()
+            
+            # Safely set the provider on the instance
+            if hasattr(self, 'sequential_thinking') and self.sequential_thinking:
+                await self.sequential_thinking.set_llm_provider(provider)
+                print("Successfully initialized sequential thinking provider")
+        except Exception as e:
+            print(f"Warning: Could not initialize sequential thinking provider: {e}")
+            # Continue without a provider - will use fallbacks
+
+    def get_custom_username(self, message):
+        """Get a formatted username for the message author"""
+        if message.guild and message.author.nick:
+            return message.author.nick
+        return message.author.display_name
+
+    async def clean_message_content(self, message):
+        """Clean and format message content for processing"""
+        # Start with the raw content
+        content = message.content
+        
+        # Remove mentions to the bot itself
+        if self.bot.user in message.mentions:
+            content = content.replace(f'<@{self.bot.user.id}>', '').replace(f'<@!{self.bot.user.id}>', '')
+        
+        # Remove command prefixes
+        bot_names, triggers, prefixes, suffixes = get_bot_names_and_triggers()
+        for prefix in prefixes:
+            if content.lower().startswith(prefix.lower()):
+                content = content[len(prefix):].strip()
+                break
+                
+        # Clean up extra whitespace
+        content = content.strip()
+        
+        return content
+
+    async def get_agent_prompt(self, message):
+        """Get agent prompt instructions for advanced reasoning"""
+        # Base agent instructions
+        agent_prompt = """You are an AI assistant with advanced reasoning capabilities.
+You can use tools, search for information, and solve complex problems.
+Think step-by-step and consider all available information before responding."""
+        
+        # Add user context if available
+        if hasattr(message, 'author') and message.author:
+            agent_prompt += f"\n\nYou are talking to {message.author.display_name}."
+            
+        # Add server context if available
+        if message.guild:
+            agent_prompt += f"\nYou are in the server: {message.guild.name}"
+            
+        # Add channel context if available
+        if hasattr(message, 'channel') and message.channel:
+            agent_prompt += f"\nThe conversation is happening in #{message.channel.name}"
+            
+        return agent_prompt
 
     async def detect_intent(self, message_content, message):
         """Detect user intent from message content"""
@@ -210,179 +312,224 @@ class OnMessage(commands.Cog):
         return {"intent": "chat", "message": message_content}
 
     async def process_message(self, message):
-        """Process messages sent by users"""
-        
-        # Skip messages from the bot itself
+        """
+        Process an incoming message and generate an appropriate response
+        """
+        # Ignore messages from self to prevent loops
         if message.author == self.bot.user:
             return
-        
-        # Skip messages from other bots (unless debug_mode is enabled)
-        if message.author.bot and not config.get('DEBUG_MODE', False):
-            return
-            
-        # Check if bot should respond in this channel
-        channel_id = str(message.channel.id)
-        active_channels = self.active_channels()  # Call the function to get active channels
-        is_active_channel = channel_id in active_channels
+
+        # Check if the message is a DM
         is_dm = isinstance(message.channel, discord.DMChannel)
         
-        # Only proceed if in an active channel, DM, or bot is mentioned
-        is_bot_mentioned = self.bot.user in message.mentions
-        was_replied_to = message.reference and message.reference.resolved and message.reference.resolved.author == self.bot.user
+        # If DMs are not allowed and this is a DM, ignore
+        if not allow_dm and is_dm:
+            return
+            
+        # Get clean message content without bot mention
+        clean_content = await self.clean_message_content(message)
         
-        # Get triggers from bot_utilities
-        bot_names, base_trigger_words = get_bot_names_and_triggers()
+        # For a Guild (server) message, check if the bot should respond
+        if not is_dm:
+            # If no content after removing mention, ignore
+            if not clean_content.strip():
+                return
+                
+            # Check if the bot was mentioned or if the channel is active
+            was_mentioned = self.bot.user.mentioned_in(message)
+            is_active = is_active_channel(message.channel, message.guild.id)
+            is_smart_mention = smart_mention(clean_content, self.bot)
+            
+            # Handle thread messages with a reply
+            in_thread_with_reply = isinstance(message.channel, discord.Thread) and message.type == discord.MessageType.reply
+            
+            # If not mentioned and not in an active channel, ignore
+            if not (was_mentioned or is_active or is_smart_mention or in_thread_with_reply):
+                return
         
-        # Process special placeholder triggers (%BOT_USERNAME%, %BOT_NICKNAME%)
-        trigger_words = []
-        for trigger in base_trigger_words:
-            if "%BOT_USERNAME%" in trigger:
-                # Replace with bot's username
-                trigger_words.append(trigger.replace("%BOT_USERNAME%", self.bot.user.name.lower()))
-            elif "%BOT_NICKNAME%" in trigger and hasattr(message, "guild") and message.guild:
-                # Replace with bot's nickname in this guild if it has one
-                member = message.guild.get_member(self.bot.user.id)
-                if member and member.nick:
-                    trigger_words.append(trigger.replace("%BOT_NICKNAME%", member.nick.lower()))
+        try:
+            # Detect intent
+            intent_data = await self.detect_intent(clean_content, message)
+            
+            # Handle the detected intent
+            if intent_data and isinstance(intent_data, dict):
+                await self.handle_intent(message, intent_data)
             else:
-                trigger_words.append(trigger)
-        
-        # Add the bot's actual Discord username as a trigger
-        if self.bot.user.name.lower() not in trigger_words:
-            trigger_words.append(self.bot.user.name.lower())
-        
-        # Check if message content contains a bot name/trigger
-        message_content = message.content.lower()
-        contains_trigger = any(trigger.lower() in message_content for trigger in trigger_words)
-        
-        # Smart mention feature
-        smart_mention_active = smart_mention and not message.author.bot
-        recently_active = False  # This would be determined by channel activity tracking
-        
-        # Determine if bot should respond
-        should_respond = (
-            is_active_channel or 
-            is_dm or 
-            is_bot_mentioned or 
-            was_replied_to or
-            contains_trigger or
-            (smart_mention_active and recently_active)
-        )
-        
-        if not should_respond:
-            return
-            
-        # Get clean message content for processing
-        clean_content = message.content
-        
-        # Remove bot mentions from the message
-        for mention in message.mentions:
-            if mention == self.bot.user:
-                # Replace mentions with an empty string
-                clean_content = clean_content.replace(f'<@{mention.id}>', '').replace(f'<@!{mention.id}>', '')
-        
-        # Remove bot trigger words/names from the beginning of messages
-        for trigger in trigger_words:
-            if clean_content.lower().startswith(trigger.lower()):
-                clean_content = clean_content[len(trigger):].strip()
-                
-        # Remove leading/trailing whitespace
-        clean_content = clean_content.strip()
-        
-        # If message is empty after removing mentions, use a default prompt
-        if not clean_content:
-            clean_content = "Hello!"
-        
-        # Detect intent from message content
-        intent_data = await self.detect_intent(clean_content, message)
-        
-        # Log the detected intent for debugging
-        logger.info(f"Detected intent: {intent_data['intent']} for message: {clean_content[:50]}...")
-        
-        # Handle the detected intent
-        try:
-            if intent_data['intent'] == 'generate_image':
-                await self.handle_image_generation(message, intent_data['prompt'])
-                return
-                
-            elif intent_data['intent'] == 'analyze_image':
-                await self.handle_image_analysis(message, intent_data['attachment'])
-                return
-                
-            elif intent_data['intent'] == 'ocr_image':
-                await self.handle_image_ocr(message, intent_data['attachment'])
-                return
-                
-            elif intent_data['intent'] == 'transcribe_voice':
-                await self.handle_voice_transcription(message, intent_data['attachment'])
-                return
-                
-            elif intent_data['intent'] == 'analyze_sentiment':
-                if 'text' in intent_data:
-                    await self.handle_sentiment_analysis_text(message, intent_data['text'])
-                else:
-                    await self.handle_sentiment_analysis_reference(message, intent_data['referenced_message'])
-                return
-                
-            elif intent_data['intent'] == 'web_search':
-                await self.handle_web_search(message, intent_data['query'])
-                return
-                
-            elif intent_data['intent'] == 'sequential_thinking':
-                await self.handle_sequential_thinking(message, intent_data['problem'])
-                return
-                
-            elif intent_data['intent'] == 'mcp_agent':
-                await self.handle_mcp_agent(message, intent_data['query'])
-                return
+                # Fallback to general reasoning if intent detection fails
+                username = self.get_custom_username(message)
+                user_id = str(message.author.id)
+                channel_id = str(message.channel.id)
+                await self.handle_message_with_reasoning_router(message, clean_content, username, user_id, channel_id)
         except Exception as e:
-            error_traceback = traceback.format_exc()
-            logger.error(f"Error handling intent {intent_data['intent']}: {error_traceback}")
-            await message.channel.send(f"I encountered an error while processing your request: {str(e)[:1500]}")
-            return
-                
-        # Check for sequential thinking based on complexity for regular chat messages
-        # This happens only if none of the specific intents were detected
-        try:
-            from bot_utilities.ai_utils import should_use_sequential_thinking
-            use_sequential, complexity_score, reasoning = await should_use_sequential_thinking(clean_content)
-            
-            if use_sequential:
-                # Log why we're using sequential thinking
-                logger.info(f"Using sequential thinking for message: {reasoning} (score: {complexity_score:.2f})")
-                await self.handle_sequential_thinking(message, clean_content)
-                return
-        except Exception as e:
-            logger.error(f"Error checking for sequential thinking complexity: {e}")
+            logger.error(f"Error in process_message: {e}")
+            traceback.print_exc()
+
+    async def handle_message_with_reasoning_router(self, message, clean_content, username, user_id, channel_id):
+        """
+        Handle message processing using the reasoning router
         
-        # Default path: Regular AI chat interaction
+        This handles complex routing to the appropriate reasoning method
+        """
         try:
-            # Check if we should stream the response
-            stream = config.get('STREAM_RESPONSES', False)
+            # Start processing indicator
+            initial_message = None
+            if SHOW_THINKING_INDICATOR:
+                try:
+                    # Use an animated emoji for the thinking indicator if possible
+                    initial_message = await message.channel.send("Thinking... <a:thinking:1174880300425388042>")
+                except:
+                    # Fallback to simple text if emoji not available
+                    try:
+                        initial_message = await message.channel.send("Thinking...")
+                    except:
+                        pass  # If we can't send the indicator, just continue
             
-            # Show typing indicator while generating response
-            async with message.channel.typing():
-                # Call the AI model to generate a response
-                response = await self.generate_response(
-                    instructions=self.instructions,
-                    history=await process_conversation_history(message, self.bot),
-                    stream=stream  # Whether to stream the response
+            # Get thread_id for context tracking if we're in a thread
+            thread_id = channel_id if isinstance(message.channel, discord.Thread) else None
+            
+            # Create response context
+            context_manager = get_context_manager()
+            context = {}
+            if context_manager:
+                try:
+                    context = context_manager.build_context(
+                        user_id=user_id,
+                        channel_id=channel_id,
+                        thread_id=thread_id
+                    )
+                except AttributeError:
+                    # Fallback if build_context method doesn't exist
+                    print("Warning: context_manager.build_context method not found")
+            
+            # Add enhanced instructions from configurator if available
+            guild_id = str(message.guild.id) if message.guild else None
+            enhanced_instructions = None
+            
+            # Analyze query to see if it needs sequential thinking
+            should_use_sequential = self._should_use_sequential_thinking(clean_content)
+            
+            # Generator router instance if needed
+            router = None
+            if not hasattr(self, 'router_adapter') or not self.router_adapter:
+                try:
+                    from bot_utilities.router_compatibility import create_router_adapter
+                    self.router_adapter = create_router_adapter()
+                    router = self.router_adapter
+                except Exception as e:
+                    print(f"Error creating router adapter: {e}")
+            else:
+                router = self.router_adapter
+            
+            if router is None:
+                # Fallback if we can't get a router
+                await message.channel.send("I'm having trouble processing your request. Please try again later.")
+                return
+            
+            # Generate content from router
+            force_method = "sequential" if should_use_sequential else None
+            response = await router.process(
+                query=clean_content,
+                username=username,
+                user_id=user_id,
+                channel_id=channel_id,
+                guild_id=guild_id,
+                history=context.get("history", []),
+                enhanced_instructions=enhanced_instructions,
+                enhanced_context=context,
+                force_method=force_method
+            )
+            
+            # Determine if this is a sequential thinking style response
+            metadata = response[1] if isinstance(response, tuple) and len(response) > 1 else {}
+            method = metadata.get("method", "standard")
+            
+            # Check for sequential thinking indicators in the response
+            response_text = response[0] if isinstance(response, tuple) and len(response) > 0 else str(response)
+            has_sequential_markers = "**Step" in response_text or "**Thought" in response_text
+            
+            # Determine if we should treat this as sequential thinking
+            is_sequential = (
+                method in ["sequential", "cot", "got", "list", "cov"] or 
+                has_sequential_markers or
+                should_use_sequential
+            )
+            
+            # Use our unified response method
+            await self.send_response(
+                message=message, 
+                response=response, 
+                is_sequential=is_sequential,
+                problem=clean_content,
+                initial_message=initial_message
+            )
+            
+        except Exception as e:
+            print(f"Error in handle_message_with_reasoning_router: {e}")
+            traceback.print_exc()
+            try:
+                await message.channel.send(
+                    "I encountered an error while processing your message. Please try again later.",
+                    reference=message
                 )
+            except:
+                pass
+            
+    def _should_use_sequential_thinking(self, query):
+        """
+        Determine if a query would benefit from sequential thinking
+        
+        Args:
+            query: The user's question/query
+            
+        Returns:
+            bool: True if sequential thinking should be used
+        """
+        # Check if sequential thinking is mentioned
+        if re.search(r'sequential\s+thinking|step\s+by\s+step|breakdown|break\s+down', query.lower()):
+            return True
+            
+        # Check for complexity indicators
+        complexity_indicators = [
+            # Question complexity
+            r'why', r'how', r'explain', r'analyze', r'compare', r'contrast', 
+            r'pros\s+and\s+cons', r'advantages', r'disadvantages',
+            
+            # Topic complexity 
+            r'complex', r'complicated', r'difficult', r'advanced',
+            r'in\s+depth', r'detailed', r'comprehensive', r'thorough',
+            
+            # Multi-step problems
+            r'steps?', r'process', r'procedure', r'method', r'approach',
+            r'algorithm', r'formula', r'equation', r'calculate', r'solve',
+            
+            # Abstract concepts
+            r'concept', r'theory', r'principle', r'philosophy', r'framework',
+            
+            # Logic and reasoning
+            r'logic', r'reasoning', r'argument', r'fallacy', r'critique',
+            r'evaluate', r'assess', r'judge', r'review',
+            
+            # Historical/political topics
+            r'history', r'politics', r'war', r'conflict', r'revolution',
+            r'movement', r'era', r'period', r'century', r'decade',
+            
+            # Scientific topics
+            r'science', r'physics', r'chemistry', r'biology', r'mathematics',
+            r'psychology', r'sociology', r'economics', r'research'
+        ]
+        
+        # Check if any complexity indicators are present
+        if any(re.search(pattern, query.lower()) for pattern in complexity_indicators):
+            # Only use sequential for longer queries (likely more complex questions)
+            if len(query.split()) >= 8:
+                return True
                 
-                # If streaming is enabled, handle the streaming response
-                if stream:
-                    await self.process_streaming_response(message, response)
-                else:
-                    # Check if voice response is requested
-                    use_voice = any(phrase in clean_content.lower() for phrase in ["speak to me", "talk to me", "use voice", "voice message"])
-                    
-                    # Send the response
-                    await self.send_response(message, response, use_voice=use_voice)
-                
-        except Exception as e:
-            error_traceback = traceback.format_exc()
-            logger.error(f"Error in process_message: {error_traceback}")
-            await message.channel.send(f"I encountered an error while processing your message: {str(e)[:1500]}")
+        # Check for question marks and length
+        if query.count('?') >= 2 or len(query.split()) >= 15:
+            return True
+            
+        # Default to standard response
+        return False
 
     async def handle_image_generation(self, message, prompt):
         """Handle image generation intent"""
@@ -632,300 +779,210 @@ class OnMessage(commands.Cog):
             await message.reply(f"I encountered an error while searching: {str(e)[:1500]}")
             
     async def handle_sequential_thinking(self, message, problem):
-        """Handle sequential thinking intent"""
-        # Create a tracking variable for the initial message
-        initial_message = None
-        message_reference = None  # Store the initial message reference for tracking
-        
+        """
+        Handle sequential thinking for a user's query
+        """
         try:
-            # Show typing indicator to indicate processing
-            async with message.channel.typing():
-                # Send an initial message with a spinning indicator
+            # Show thinking indicator
+            initial_message = None
+            if SHOW_THINKING_INDICATOR:
                 try:
-                    initial_message = await message.reply(f"🔄 Starting sequential thinking for: `{problem}`")
-                    message_reference = initial_message.id  # Store the ID for reference
-                except Exception as e:
-                    print(f"Error sending initial message: {e}")
-                    # Try a direct channel send if reply fails
+                    initial_message = await message.channel.send("Thinking... <a:thinking:1174880300425388042>")
+                except:
                     try:
-                        initial_message = await message.channel.send(f"🔄 Starting sequential thinking for: `{problem}`")
-                        message_reference = initial_message.id  # Store the ID
-                    except Exception as e2:
-                        print(f"Critical error sending message: {e2}")
-                
-                # Detect if this is a complex topic that needs special handling
-                is_complex_topic = False
-                use_tools = False
-                
-                # Check for keywords that suggest complex topics
-                complex_topic_keywords = [
-                    # General problem-solving keywords
-                    "analyze", "investigate", "research", "examine", "explore", "explain", "solve", 
-                    "strategize", "compare", "contrast", "evaluate", "assess", "critique", "review",
-                    
-                    # Technical and analytical
-                    "algorithm", "technical", "architecture", "framework", "system", "design", "process",
-                    "mathematical", "computation", "physics", "engineering", "chemistry", "biology",
-                    
-                    # Business and organizational
-                    "business", "strategy", "management", "organization", "planning", "operations",
-                    "marketing", "finance", "investment", "product", "service", "customer", "market",
-                    
-                    # Creative and conceptual
-                    "conceptualize", "create", "design", "develop", "innovate", "imagine", "brainstorm",
-                    "synthesize", "generate", "formulate", "construct", "compose", "craft", 
-                    
-                    # Social and human topics
-                    "social", "cultural", "psychological", "behavioral", "ethical", "moral", "philosophical",
-                    "educational", "learning", "communication", "community", "collaboration",
-                    
-                    # Geopolitical/historical (retained from original)
-                    "conflict", "war", "dispute", "politics", "history", "crisis", "relation", "tension", 
-                    "peace", "treaty", "agreement", "border", "territory", "military", "diplomatic", 
-                    "economic", "global", "international", "regional", "historical",
-                    
-                    # Decision making
-                    "decision", "choice", "tradeoff", "prioritize", "optimize", "maximize", "minimize",
-                    "balance", "weigh", "consider", "judge", "determine", "select", "choose",
-                    
-                    # Time-based
-                    "plan", "schedule", "timeline", "roadmap", "forecast", "predict", "project",
-                    "future", "trend", "evolution", "development", "progress", "history",
-                    
-                    # Sequential keywords
-                    "step", "process", "procedure", "method", "approach", "technique", "workflow",
-                    "sequential", "thinking", "reasoning", "logic", "analysis", "breakdown",
-                    
-                    # Explicit triggers
-                    "sequential thinking", "think step by step", "break down", "complex problem"
-                ]
-                
-                # Detect if this is a complex topic
-                is_complex_topic = any(keyword in problem.lower() for keyword in complex_topic_keywords)
-                
-                # Check for tool integration keywords
-                tool_keywords = ["search", "web", "browse", "information", "data", "lookup", 
-                                "db", "database", "fetch", "retrieve", "knowledge"]
-                
-                use_tools = any(keyword in problem.lower() for keyword in tool_keywords)
-                
-                # Update the message to show appropriate processing
+                        initial_message = await message.channel.send("Thinking...")
+                    except:
+                        pass
+            
+            # Setup context for better reasoning
+            user_id = str(message.author.id)
+            channel_id = str(message.channel.id)
+            thread_id = channel_id if isinstance(message.channel, discord.Thread) else None
+            
+            # Get context
+            context_manager = get_context_manager()
+            context = {}
+            if context_manager:
                 try:
-                    # Safely check if message exists and is accessible
-                    if initial_message:
-                        try:
-                            # Try to access the message - this will fail if it's deleted
-                            if use_tools:
-                                await initial_message.edit(content=f"🔄 Researching and solving: `{problem}`")
-                            elif is_complex_topic:
-                                await initial_message.edit(content=f"🔄 Analyzing complex topic: `{problem}`")
-                            else:
-                                await initial_message.edit(content=f"🔄 Processing: `{problem}`")
-                        except discord.errors.NotFound:
-                            # Message was deleted or not found
-                            print(f"Warning: Initial message not found (ID: {message_reference}), creating a new one")
-                            try:
-                                initial_message = await message.channel.send(f"🔄 Continuing to solve: `{problem}`")
-                                message_reference = initial_message.id  # Update reference
-                            except Exception as e:
-                                print(f"Error creating replacement message: {e}")
-                except Exception as e:
-                    print(f"Warning: Could not edit message, continuing with processing: {e}")
-                
-                # Build context for enhanced reasoning
-                context = {
-                    "user": {
-                        "id": str(message.author.id),
-                        "name": message.author.display_name,
-                    },
-                    "channel": {
-                        "name": message.channel.name if hasattr(message.channel, "name") else "DM",
-                        "is_dm": isinstance(message.channel, discord.DMChannel),
-                        "is_thread": isinstance(message.channel, discord.Thread),
-                    },
-                    "guild": {
-                        "name": message.guild.name if message.guild else "DM",
-                        "id": str(message.guild.id) if message.guild else None,
-                    }
-                }
-                
-                # Get LLM provider for sequential thinking
-                llm_provider = None
-                try:
-                    from bot_utilities.ai_utils import get_ai_provider
-                    llm_provider = await get_ai_provider()
-                    # Set the LLM provider to our sequential thinking instance
-                    await self.sequential_thinking.set_llm_provider(llm_provider)
-                except Exception as e:
-                    print(f"Error getting AI provider: {e}")
-                    # Will use fallback mechanisms in sequential_thinking.py
-                
-                # Standard sequential thinking path
-                try:
-                    # Try updating message to show we're processing
-                    try:
-                        if initial_message:
-                            try:
-                                await initial_message.edit(content=f"🔄 Thinking through: `{problem}`")
-                            except discord.errors.NotFound:
-                                pass
-                    except Exception as e:
-                        print(f"Error updating message for standard processing: {e}")
-                    
-                    # Choose the appropriate thinking style based on problem complexity
-                    prompt_style = "sequential"  # Default style
-                    
-                    # For complex topics that might benefit from verification, use chain-of-verification
-                    verification_keywords = ["fact", "accuracy", "verify", "confirm", "check", "research",
-                                          "evidence", "proof", "source", "citation", "reference",
-                                          "correct", "accurate", "precise", "exact", "valid"]
-                    
-                    # Use Chain-of-Verification for complex topics that need factual accuracy
-                    needs_verification = is_complex_topic and any(keyword in problem.lower() for keyword in verification_keywords)
-                    
-                    # Check for non-linear problem-solving needs (Graph-of-Thought)
-                    got_keywords = ["compare", "contrast", "multiple", "alternatives", "pros and cons", 
-                                    "different approaches", "various methods", "options", "pathways",
-                                    "interconnected", "relationship", "related", "network", "graph",
-                                    "multi-faceted", "complex", "trade-offs", "decision tree",
-                                    "matrix", "framework", "perspectives", "viewpoints", "angles"]
-                    
-                    needs_got = is_complex_topic and any(keyword in problem.lower() for keyword in got_keywords)
-                    
-                    if needs_verification or "verify" in problem.lower() or "verification" in problem.lower():
-                        prompt_style = "cov"
-                        if initial_message:
-                            try:
-                                await initial_message.edit(content=f"🔄 Verifying facts while solving: `{problem}`")
-                            except discord.errors.NotFound:
-                                pass
-                    elif needs_got or any(phrase in problem.lower() for phrase in ["graph of thought", "different angles", "multiple perspectives"]):
-                        prompt_style = "got"  # Use graph-of-thought for non-linear problems
-                        if initial_message:
-                            try:
-                                await initial_message.edit(content=f"🔄 Exploring multiple thought paths for: `{problem}`")
-                            except discord.errors.NotFound:
-                                pass
-                    elif is_complex_topic:
-                        prompt_style = "cot"  # Use chain-of-thought for general complex topics
-                    
-                    # Use our sequential thinking implementation
-                    success, response = await self.sequential_thinking.run(
-                        problem=problem,
-                        context=context,
-                        # Use the chosen prompt style
-                        prompt_style=prompt_style,
-                        num_thoughts=7 if is_complex_topic else 5,
-                        temperature=0.3 if is_complex_topic else 0.2,
-                        max_tokens=2500 if is_complex_topic else 2000,
-                        timeout=120 if is_complex_topic else 90
+                    context = context_manager.build_context(
+                        user_id=user_id,
+                        channel_id=channel_id,
+                        thread_id=thread_id
                     )
-                    
-                    if success:
-                        # Send the response
-                        await self.send_sequential_thinking_response(
-                            message, problem, response, initial_message=initial_message,
-                            message_reference=message_reference
-                        )
-                        return
-                    else:
-                        print(f"Sequential thinking failed: {response}")
-                        # We'll fall back to standard AI response below
-                except Exception as e:
-                    print(f"Error in sequential thinking: {e}")
-                    # We'll fall back to standard AI response
-                
-                # If we get here, both approaches failed, so use standard AI response
+                except:
+                    # If build_context fails, try alternative methods
+                    try:
+                        context = {
+                            "history": context_manager.get_conversation_history(
+                                user_id=user_id,
+                                channel_id=channel_id,
+                                thread_id=thread_id,
+                                limit=10
+                            )
+                        }
+                    except:
+                        # Fallback to empty context
+                        context = {}
+            
+            # Determine the optimal thinking style
+            thinking_style = self._determine_thinking_style(problem)
+            
+            # Get sequential thinking instance
+            if not hasattr(self, 'sequential_thinking') or not self.sequential_thinking:
                 try:
-                    # Update message to show we're using fallback approach
+                    from bot_utilities.sequential_thinking import create_sequential_thinking
+                    self.sequential_thinking = create_sequential_thinking()
+                    
+                    # Attempt to set the provider
                     try:
-                        if initial_message:
-                            try:
-                                await initial_message.edit(content=f"🔄 Using fallback approach for: `{problem}`")
-                            except discord.errors.NotFound:
-                                pass
-                    except Exception as e:
-                        print(f"Error updating message for fallback: {e}")
-                
-                    # Use MCP agent as fallback with sequential thinking prompt
-                    system_message = """You are an AI assistant that solves problems using sequential thinking.
-                    
-                    Approach each problem by:
-                    
-                    1. Breaking it down into smaller, manageable parts
-                    2. Addressing each part in a logical sequence
-                    3. Building on previous steps to reach the final solution
-                    4. Checking your work at each stage
-                    5. Summarizing your approach and final answer
-                    
-                    Think step-by-step and show your reasoning process clearly. Explicitly state when you're moving from one step to the next.
-                    """
-                    
-                    # Use timeout to prevent hanging
-                    try:
-                        response = await asyncio.wait_for(
-                            self.mcp_manager.run_simple_mcp_agent(
-                                query=problem,
-                                system_message=system_message
-                            ),
-                            timeout=60
-                        )
-                        
-                        # Send the response as sequential thinking
-                        await self.send_sequential_thinking_response(
-                            message, problem, response, initial_message=initial_message,
-                            message_reference=message_reference, is_fallback=True
-                        )
-                        return
-                    except asyncio.TimeoutError:
-                        print("MCP agent fallback timed out")
-                        # Continue to standard AI response
-                    except Exception as e:
-                        print(f"Error in MCP fallback: {e}")
-                        # Continue to standard AI response
+                        from bot_utilities.ai_utils import get_ai_provider
+                        provider = await get_ai_provider()
+                        await self.sequential_thinking.set_llm_provider(provider)
+                    except:
+                        pass  # Continue without a provider, will use fallback
                 except Exception as e:
-                    print(f"Error in fallback approach: {e}")
-                
-                # Final fallback: standard AI response
-                try:
-                    # Update message
-                    try:
-                        if initial_message:
-                            try:
-                                await initial_message.edit(content=f"🔄 Generating standard response for: `{problem}`")
-                            except discord.errors.NotFound:
-                                pass
-                    except Exception as e:
-                        print(f"Error updating message for standard response: {e}")
-                    
-                    # Generate standard AI response
-                    response = await self.generate_response(
-                        f"""Solve this problem using sequential thinking: {problem}
-                        
-                        Show your step-by-step reasoning process in a clear, structured format with numbered steps.
-                        """,
-                        []
-                    )
-                    
-                    # Send the standard response
-                    await self.send_sequential_thinking_response(
-                        message, problem, response, initial_message=initial_message,
-                        message_reference=message_reference, is_fallback=True
-                    )
-                except Exception as e:
-                    print(f"Error generating standard response: {e}")
-                    # We'll reply with a simple error message
-                    if initial_message:
-                        try:
-                            await initial_message.edit(content=f"❌ I encountered an error while thinking through this problem. Please try again with a simpler query.")
-                        except:
-                            await message.reply("❌ I encountered an error while thinking through this problem. Please try again with a simpler query.")
-                    else:
-                        await message.reply("❌ I encountered an error while thinking through this problem. Please try again with a simpler query.")
+                    print(f"Error initializing sequential thinking: {e}")
+                    await message.channel.send("I'm sorry, I couldn't initialize my thinking process.", reference=message)
+                    return
+            
+            # Run sequential thinking with the appropriate style
+            success, response = await self.sequential_thinking.run(
+                problem=problem,
+                context=context,
+                prompt_style=thinking_style,
+                num_thoughts=5,
+                temperature=0.7
+            )
+            
+            if not success:
+                await message.channel.send(
+                    "I couldn't complete the sequential thinking process for your query.",
+                    reference=message
+                )
+                return
+            
+            # Create metadata for the response
+            metadata = {
+                "method": thinking_style,
+                "method_name": self._get_thinking_style_name(thinking_style),
+                "method_emoji": self._get_thinking_style_emoji(thinking_style)
+            }
+            
+            # Package response with metadata
+            full_response = (response, metadata)
+            
+            # Send the response using our unified method
+            await self.send_response(
+                message=message,
+                response=full_response,
+                is_sequential=True,
+                problem=problem,
+                initial_message=initial_message
+            )
+            
         except Exception as e:
-            error_traceback = traceback.format_exc()
-            print(f"Error in handle_sequential_thinking: {error_traceback}")
-            await message.reply(f"I encountered an error while thinking through this problem: {str(e)[:1500]}")
+            print(f"Error in handle_sequential_thinking: {e}")
+            await message.channel.send(
+                "I encountered an error while processing your message. Please try again later.",
+                reference=message
+            )
+
+    def _determine_thinking_style(self, query):
+        """
+        Determine the best thinking style for a query
+        
+        Args:
+            query: The user query
+            
+        Returns:
+            str: The thinking style to use
+        """
+        query_lower = query.lower()
+        
+        # Direct request for specific styles
+        if any(pattern in query_lower for pattern in ["verify", "verification", "check fact", "confirm"]):
+            return "cov"  # Chain-of-verification
+        
+        if any(pattern in query_lower for pattern in ["multi angle", "different perspective", "compare approach", "graph of thought"]):
+            return "got"  # Graph-of-thought
+        
+        if any(pattern in query_lower for pattern in ["list", "bullet point", "point by point", "enumerat"]):
+            return "list"  # List-based thinking
+        
+        # Complex topics that need fact verification
+        verification_topics = ["history", "politic", "science", "research", "fact", "statistic", "data"]
+        if any(topic in query_lower for topic in verification_topics) and len(query.split()) > 10:
+            return "cov"
+        
+        # Multi-perspective topics
+        perspective_topics = ["debate", "argument", "controversy", "opinion", "perspective", "viewpoint"]
+        if any(topic in query_lower for topic in perspective_topics):
+            return "got"
+        
+        # Default to standard chain-of-thought for most complex topics
+        return "cot"
+
+    def _get_thinking_style_name(self, style):
+        """Get a human-readable name for a thinking style"""
+        style_names = {
+            "sequential": "Sequential Thinking",
+            "cot": "Chain of Thought",
+            "got": "Graph of Thought",
+            "cov": "Chain of Verification",
+            "list": "Structured List Thinking"
+        }
+        return style_names.get(style, "Sequential Thinking")
+
+    def _get_thinking_style_emoji(self, style):
+        """Get an emoji representing a thinking style"""
+        style_emojis = {
+            "sequential": "🔄",
+            "cot": "⛓️",
+            "got": "🕸️",
+            "cov": "✅",
+            "list": "📋"
+        }
+        return style_emojis.get(style, "🤔")
+
+    async def handle_intent(self, message, intent_data):
+        """
+        Handle intents detected from user messages
+        
+        Args:
+            message: The Discord message
+            intent_data: Dictionary of intent information
+        """
+        intent = intent_data.get("intent", "chat")
+        
+        # Handle each intent type
+        if intent == "generate_image":
+            await self.handle_image_generation(message, intent_data.get("prompt", ""))
+        elif intent == "analyze_image":
+            await self.handle_image_analysis(message, intent_data.get("attachment"))
+        elif intent == "ocr_image":
+            await self.handle_image_ocr(message, intent_data.get("attachment"))
+        elif intent == "transcribe_voice":
+            await self.handle_voice_transcription(message, intent_data.get("attachment"))
+        elif intent == "analyze_sentiment":
+            text = intent_data.get("text")
+            referenced_message = intent_data.get("referenced_message")
+            if text:
+                await self.handle_sentiment_analysis_text(message, text)
+            elif referenced_message:
+                await self.handle_sentiment_analysis_reference(message, referenced_message)
+        elif intent == "sequential_thinking":
+            await self.handle_sequential_thinking(message, intent_data.get("problem", ""))
+        elif intent == "web_search":
+            await self.handle_web_search(message, intent_data.get("query", ""))
+        elif intent == "mcp_agent":
+            await self.handle_mcp_agent(message, intent_data.get("query", ""))
+        else:
+            # Default to reasoning router for any chat intent
+            clean_content = intent_data.get("message", "")
+            username = self.get_custom_username(message)
+            user_id = str(message.author.id)
+            channel_id = str(message.channel.id)
+            await self.handle_message_with_reasoning_router(message, clean_content, username, user_id, channel_id)
 
     async def handle_mcp_agent(self, message, query):
         """Handle MCP agent intent"""
@@ -1100,261 +1157,248 @@ class OnMessage(commands.Cog):
             
             return accumulated_response
 
-    async def send_response(self, message, response, use_voice=False, create_thread=False):
+    async def send_response(self, message, response, message_reference=None, is_sequential=False, problem=None, initial_message=None):
         """
-        Send the AI response to the user
+        Send a response to Discord with proper formatting while handling tuple responses
         
         Args:
-            message (discord.Message): The original message
-            response (str): The AI response
-            use_voice (bool): Whether to send a voice response
-            create_thread (bool): Whether to create a thread
-            
-        Returns:
-            discord.Message: The first message sent in response
+            message: The Discord message to respond to
+            response: The response to send (string or tuple)
+            message_reference: Optional message reference for threading
+            is_sequential: If True, use sequential thinking formatting
+            problem: Original problem (for sequential thinking context storage)
+            initial_message: Optional message to delete (like "thinking..." message)
         """
-        first_message = None
-        
         try:
-            # Get user preferences
-            user_prefs = await UserPreferences.get_user_preferences(message.author.id)
-            use_embeds = user_prefs.get('use_embeds', False)
+            # Extract text from tuple responses and remove metadata
+            response_text = response
+            metadata = {}
             
-            # Format response for Discord
-            response = find_and_format_user_mentions(message, response, self.bot)
-            content, embed, chunks = format_response_for_discord(response, use_embeds, 
-                                                        author_name=message.author.display_name, 
-                                                        avatar_url=message.author.avatar.url if message.author.avatar else None)
-            
-            # If the response is in chunks, send each chunk sequentially
-            if chunks:
-                for i, chunk in enumerate(chunks):
-                    if i == 0:
-                        # First message
-                        if use_voice:
-                            # Create voice response in the background
-                            voice_task = asyncio.create_task(self.create_voice_response(response))
-                            
-                        # Send the first message
-                        if embed:
-                            first_message = await message.channel.send(embed=embed)
-                        else:
-                            first_message = await message.channel.send(content=chunk)
-                            
-                        # Create thread if requested and possible
-                        if create_thread and first_message and hasattr(message.channel, 'create_thread'):
-                            try:
-                                thread_name = message.content[:95] + "..." if len(message.content) > 95 else message.content
-                                await first_message.create_thread(name=thread_name)
-                            except Exception as e:
-                                print(f"Error creating thread: {e}")
-                        
-                        # Send voice file if available
-                        if use_voice:
-                            try:
-                                voice_file = await voice_task
-                                if voice_file:
-                                    await message.channel.send(file=discord.File(voice_file, filename="response.mp3"))
-                            except Exception as e:
-                                print(f"Error sending voice response: {e}")
-                    else:
-                        # Additional chunks
-                        await message.channel.send(content=chunk)
-            else:
-                # Single message response
-                if use_voice:
-                    # Create voice response in the background
-                    voice_task = asyncio.create_task(self.create_voice_response(response))
-                    
-                # Send the message
-                if embed:
-                    first_message = await message.channel.send(embed=embed)
-                else:
-                    first_message = await message.channel.send(content=content)
-                    
-                # Create thread if requested and possible
-                if create_thread and first_message and hasattr(message.channel, 'create_thread'):
-                    try:
-                        thread_name = message.content[:95] + "..." if len(message.content) > 95 else message.content
-                        await first_message.create_thread(name=thread_name)
-                    except Exception as e:
-                        print(f"Error creating thread: {e}")
-                
-                # Send voice file if available
-                if use_voice:
-                    try:
-                        voice_file = await voice_task
-                        if voice_file:
-                            await message.channel.send(file=discord.File(voice_file, filename="response.mp3"))
-                    except Exception as e:
-                        print(f"Error sending voice response: {e}")
-            
-            # Store the message ID for future reference
-            self.replied_messages[message.id] = first_message.id if first_message else None
-            
-            return first_message
-            
-        except Exception as e:
-            print(f"Error sending response: {e}")
-            # Fallback to plain text if anything fails
-            try:
-                if len(response) > 2000:
-                    chunks = chunk_message(response)
-                    first_message = await message.channel.send(content=chunks[0])
-                    for chunk in chunks[1:]:
-                        await message.channel.send(content=chunk)
-                else:
-                    first_message = await message.channel.send(content=response[:2000])
-                
-                # Store the message ID for future reference
-                self.replied_messages[message.id] = first_message.id if first_message else None
-                
-                return first_message
-            except:
-                print("Critical error sending any response")
-                return None
-
-    async def create_voice_response(self, text):
-        """Create a voice file from the response text"""
-        try:
-            # Use a simpler first sentence for the voice response
-            first_sentence = re.split(r'(?<=[.!?])\s+', text)[0]
-            voice_text = first_sentence[:500]  # Limit to 500 chars
-            return await text_to_speech(voice_text)
-        except Exception as e:
-            print(f"Error creating voice response: {e}")
-            return None
-
-    async def send_sequential_thinking_response(self, message, problem, response, initial_message=None,
-                                       message_reference=None, is_tools_response=False, is_fallback=False):
-        """Send a response for sequential thinking"""
-        try:
-            # Format the response for better readability
-            try:
-                # Format the response using our sequential thinking implementation
-                formatted_response = response
-                if not is_fallback:  # If it's not already formatted through a fallback
-                    # The response should already be formatted from sequential_thinking.py
-                    # But in case someone calls this function directly with raw text:
-                    if "**Thought" not in response and "**Step" not in response:
-                        formatted_response = self.sequential_thinking.format_response(response)
-                    else:
-                        formatted_response = response
-            except Exception as e:
-                print(f"Error formatting response: {e}")
-                formatted_response = response  # Fall back to the raw response
-                
-            # Check if response is too long for Discord
-            if len(formatted_response) > 2000:
-                # Split into multiple messages
-                chunks = [formatted_response[i:i+1990] for i in range(0, len(formatted_response), 1990)]
-                
-                if initial_message:
-                    try:
-                        # Update the initial message with the first chunk
-                        await initial_message.edit(content=chunks[0])
-                    except discord.errors.NotFound:
-                        try:
-                            # Try to find it by ID if available
-                            if message_reference:
-                                try:
-                                    found_message = await message.channel.fetch_message(message_reference)
-                                    await found_message.edit(content=chunks[0])
-                                except:
-                                    # Send as a new message if can't find by ID
-                                    await message.reply(chunks[0])
-                            else:
-                                await message.reply(chunks[0])
-                        except Exception as e:
-                            print(f"Error handling first chunk with not found: {e}")
-                            await message.reply(chunks[0])
-                    except Exception as e:
-                        print(f"Error updating initial message with chunk: {e}")
-                        await message.reply(chunks[0])
-                else:
-                    # Send as a direct reply if no initial message is available
-                    await message.reply(chunks[0])
-                
-                # Send remaining chunks
-                for chunk in chunks[1:]:
-                    try:
-                        await message.channel.send(chunk)
-                    except Exception as e:
-                        print(f"Error sending chunk: {e}")
-                        try:
-                            # Try after a brief pause
-                            await asyncio.sleep(1)
-                            await message.channel.send(chunk)
-                        except:
-                            pass
-            else:
-                # Response fits in a single message
-                if initial_message:
-                    try:
-                        # Update the initial message with the full response
-                        await initial_message.edit(content=formatted_response)
-                    except discord.errors.NotFound:
-                        # Try to find by ID if available
-                        try:
-                            if message_reference:
-                                try:
-                                    found_message = await message.channel.fetch_message(message_reference)
-                                    await found_message.edit(content=formatted_response)
-                                except:
-                                    # Send as a new message if can't find by ID
-                                    await message.reply(formatted_response)
-                            else:
-                                await message.reply(formatted_response)
-                        except Exception as e:
-                            print(f"Error handling response with not found: {e}")
-                            await message.reply(formatted_response)
-                    except Exception as e:
-                        print(f"Error updating initial message: {e}")
-                        await message.reply(formatted_response)
-                else:
-                    # Send as a direct reply if no initial message is available
-                    await message.reply(formatted_response)
-            
-            # Log this interaction for metrics/monitoring
-            try:
-                from bot_utilities.monitoring import AgentMonitor
-                monitor = AgentMonitor()
-                asyncio.create_task(monitor.log_interaction(
-                    command_name="sequential_thinking_text",
-                    user_id=str(message.author.id),
-                    server_id=str(message.guild.id) if message.guild else "DM",
-                    execution_time=0,  # We don't have this measurement here
-                    success=True
-                ))
-            except Exception as e:
-                print(f"Error logging interaction: {e}")
-        except Exception as e:
-            error_traceback = traceback.format_exc()
-            print(f"Error in send_sequential_thinking_response: {error_traceback}")
-            
-            # Try a simple reply if everything else failed
-            try:
-                if initial_message:
-                    await initial_message.edit(content=f"❌ Error sending response: {str(e)[:200]}")
-                else:
-                    await message.reply(f"❌ Error sending response: {str(e)[:200]}")
-            except:
+            # Handle tuple responses (response_text, metadata)
+            if isinstance(response, tuple) and len(response) >= 1:
+                response_text = response[0]  # Extract just the response text
+                if len(response) >= 2 and isinstance(response[1], dict):
+                    metadata = response[1]   # Extract metadata for context storage
+            # Check if the response might be a string representation of a tuple
+            elif isinstance(response, str) and response.startswith("(") and ("method" in response or "{" in response):
                 try:
-                    await message.channel.send(f"❌ Error sending response: {str(e)[:200]}")
+                    # Try to extract the text part using regex
+                    import re
+                    match = re.search(r'^\s*\(\s*[\'"](.+?)[\'"]\s*,', response, re.DOTALL)
+                    if match:
+                        response_text = match.group(1)
+                        # Try to extract metadata too if possible
+                        metadata_match = re.search(r',\s*(\{.+\})\s*\)$', response, re.DOTALL)
+                        if metadata_match:
+                            try:
+                                # Safely evaluate the metadata dictionary string
+                                import ast
+                                metadata_str = metadata_match.group(1).replace("'", '"')
+                                metadata = ast.literal_eval(metadata_str)
+                            except:
+                                # If metadata parsing fails, continue with empty metadata
+                                metadata = {}
+                except:
+                    # If regex fails, keep the original response
+                    response_text = response
+            
+            # Ensure we're working with a string
+            if not isinstance(response_text, str):
+                try:
+                    response_text = str(response_text)
+                except:
+                    response_text = "Error formatting response"
+            
+            # Clean response text from any tuple or metadata artifacts
+            # Remove tuple-like patterns
+            if "(" in response_text and ")" in response_text:
+                try:
+                    match = re.search(r"^\s*\(\s*['\"](.+?)['\"]", response_text, re.DOTALL)
+                    if match:
+                        response_text = match.group(1)
                 except:
                     pass
+            
+            # Remove metadata patterns
+            response_text = re.sub(r"\{'method':.*?\}", "", response_text).strip()
+            response_text = re.sub(r"\('.*?', \{'method':.*?\}\)", "", response_text).strip()
+            
+            # Remove conclusion markers that might be in sequential thinking responses
+            response_text = response_text.replace("Conclusion: ", "")
+            
+            # Remove any remaining formatting artifacts
+            response_text = response_text.strip('"\'() ')
+            
+            # Apply Discord markdown formatting if enabled
+            if USE_MARKDOWN_FORMATTING:
+                # For sequential thinking, enhance the formatting with Discord markdown
+                if is_sequential and "**Step" in response_text:
+                    # Format sequential thinking steps with better Discord markdown
+                    response_text = re.sub(r'\*\*Step (\d+)\*\*:', r'__**Step \1**__:', response_text)
+                    response_text = re.sub(r'\*\*Thought (\d+)\*\*:', r'__**Thought \1**__:', response_text)
+                    response_text = re.sub(r'\*\*Conclusion\*\*:', r'__**Conclusion**__:', response_text)
+                    response_text = re.sub(r'\*\*Verification\*\*:', r'__**Verification**__:', response_text)
+                
+                # Highlight code blocks with proper Discord markdown
+                response_text = re.sub(r'```(\w+)?', r'```\1', response_text)  # Ensure code blocks have language
+                
+                # Ensure blockquotes are properly formatted
+                response_text = re.sub(r'^>', r'> ', response_text, flags=re.MULTILINE)
+            
+            # Delete initial message if provided (like "thinking..." message)
+            if initial_message:
+                try:
+                    await initial_message.delete()
+                except:
+                    pass
+            
+            # Choose formatting approach based on response type
+            if is_sequential:
+                # Format as sequential thinking (preserve steps/thoughts markers)
+                response_chunks = []
+                current_chunk = ""
+                
+                for line in response_text.split("\n"):
+                    # If adding this line would exceed Discord's message length limit, start a new chunk
+                    if len(current_chunk) + len(line) + 1 > 1900:  # Leave room for formatting
+                        response_chunks.append(current_chunk)
+                        current_chunk = line
+                    else:
+                        current_chunk += "\n" + line if current_chunk else line
+                    
+                # Add the last chunk
+                if current_chunk:
+                    response_chunks.append(current_chunk)
+            else:
+                # Format for regular responses using Discord's formatting
+                content, embed, response_chunks = format_response_for_discord(
+                    response_text,
+                    use_embeds=USE_EMBEDS,
+                    author_name=self.bot.user.display_name,
+                    avatar_url=self.bot.user.avatar.url if self.bot.user.avatar else None
+                )
+            
+            # Get the method emoji (if available) for visual indicator
+            method_emoji = metadata.get("method_emoji", "🤖") if isinstance(metadata, dict) else "🤖"
+            
+            # Send the first chunk with the message reference for reply threading
+            if response_chunks:
+                # Add emoji prefix to first message if available and not in sequential mode
+                first_chunk = response_chunks[0]
+                if not is_sequential and method_emoji and not first_chunk.startswith(method_emoji):
+                    first_chunk = f"{method_emoji} {first_chunk}"
+                    
+                await message.channel.send(
+                    first_chunk,
+                    reference=message_reference or message
+                )
+                
+                # Send any remaining chunks
+                for chunk in response_chunks[1:]:
+                    await message.channel.send(chunk)
+            
+            # Store the response in context manager for conversation continuity
+            context_manager = get_context_manager()
+            if context_manager:
+                # Get metadata for storage if available
+                method = metadata.get("method", "sequential" if is_sequential else "standard")
+                method_name = metadata.get("method_name", "Sequential Thinking" if is_sequential else "Standard Response")
+                is_fallback = metadata.get("is_fallback", False)
+                
+                # Calculate thread ID (threads have the same ID as their channel)
+                thread_id = str(message.channel.id) if isinstance(message.channel, discord.Thread) else None
+                
+                # Store in conversation history
+                context_manager.add_message(
+                    user_id=str(message.author.id),
+                    channel_id=str(message.channel.id),
+                    thread_id=thread_id,
+                    message={
+                        "role": "assistant",
+                        "content": response_text,
+                        "timestamp": time.time(),
+                        "type": method,
+                        "method": method_name,
+                        "is_fallback": is_fallback,
+                        "in_response_to": problem if problem else ""
+                    }
+                )
+                
+                # Store thinking process if applicable
+                if is_sequential and problem:
+                    context_manager.add_thinking_process(
+                        user_id=str(message.author.id),
+                        channel_id=str(message.channel.id),
+                        thread_id=thread_id,
+                        thinking={
+                            "problem": problem,
+                            "solution": response_text,
+                            "prompt_style": method,
+                            "method_name": method_name,
+                            "is_complex": True,
+                            "timestamp": time.time(),
+                            "success": True,
+                            "is_fallback": is_fallback
+                        }
+                    )
+        except Exception as e:
+            print(f"Error sending response: {e}")
+            try:
+                await message.channel.send(
+                    "I'm having trouble sending my response. Please try again later.",
+                    reference=message_reference or message
+                )
+            except:
+                pass
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        """Event handler for incoming messages"""
+        """
+        Handle incoming messages and generate AI responses when appropriate
+        """
+        # Ignore messages from self to prevent loops
+        if message.author == self.bot.user:
+            return
+
+        # Check if the message is a DM
+        is_dm = isinstance(message.channel, discord.DMChannel)
         
-        # Ignore messages from the bot itself
-        if message.author.id == self.bot.user.id:
+        # If DMs are not allowed and this is a DM, ignore
+        if not allow_dm and is_dm:
             return
             
-        # Process the message
-        await self.process_message(message)
-
+        # Get clean message content without bot mention
+        clean_content = await self.clean_message_content(message)
+        
+        # For a Guild (server) message, check if the bot is mentioned or in an active channel
+        if not is_dm:
+            # If no content after removing mention, ignore
+            if not clean_content.strip():
+                return
+                
+            # Check if the bot was mentioned or if the channel is active
+            was_mentioned = self.bot.user.mentioned_in(message)
+            is_active = is_active_channel(message.channel, message.guild.id)
+            is_smart_mention = smart_mention(clean_content, self.bot)
+            
+            # Handle thread messages with a reply
+            in_thread_with_reply = isinstance(message.channel, discord.Thread) and message.type == discord.MessageType.reply
+            
+            # If not mentioned and not in an active channel, ignore
+            if not (was_mentioned or is_active or is_smart_mention or in_thread_with_reply):
+                return
+        
+        try:
+            # Get the user's custom username or display name
+            username = self.get_custom_username(message)
+            user_id = str(message.author.id)
+            channel_id = str(message.channel.id)
+            
+            # Process message with reasoning router
+            await self.handle_message_with_reasoning_router(message, clean_content, username, user_id, channel_id)
+        except Exception as e:
+            logger.error(f"Error in on_message: {e}")
+            traceback.print_exc()
 
 async def setup(bot):
     await bot.add_cog(OnMessage(bot))

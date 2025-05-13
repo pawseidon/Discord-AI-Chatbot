@@ -13,6 +13,12 @@ load_dotenv()
 
 class AIBot(commands.AutoShardedBot):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # Ensure intents explicitly include message content
+        if "intents" not in kwargs:
+            intents = discord.Intents.all()
+            intents.message_content = True
+            kwargs["intents"] = intents
+            
         if config['AUTO_SHARDING']:
             super().__init__(*args, **kwargs)
         else:

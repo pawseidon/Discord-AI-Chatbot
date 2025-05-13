@@ -6,7 +6,7 @@ import random
 import json
 import asyncio
 import re
-import datetime
+from datetime import datetime, timezone
 from langdetect import detect
 from gtts import gTTS
 from urllib.parse import quote
@@ -34,11 +34,11 @@ bot_instructions = instructions_content.get(default_instruction_name, "")
 # This will be updated periodically to ensure the bot always has current time
 timestamp_cache = {
     "last_updated": time.time(),
-    "current_date": datetime.datetime.now().strftime("%Y-%m-%d"),
-    "current_time": datetime.datetime.now().strftime("%H:%M:%S"),
-    "current_year": datetime.datetime.now().year,
-    "current_month": datetime.datetime.now().month,
-    "current_day": datetime.datetime.now().day,
+    "current_date": datetime.now().strftime("%Y-%m-%d"),
+    "current_time": datetime.now().strftime("%H:%M:%S"),
+    "current_year": datetime.now().year,
+    "current_month": datetime.now().month,
+    "current_day": datetime.now().day,
     "update_interval": 60  # Update every 60 seconds
 }
 
@@ -46,7 +46,7 @@ def update_timestamp_cache():
     """Update the timestamp cache if it's older than the update interval"""
     current_time = time.time()
     if current_time - timestamp_cache["last_updated"] > timestamp_cache["update_interval"]:
-        now = datetime.datetime.now()
+        now = datetime.now()
         timestamp_cache["last_updated"] = current_time
         timestamp_cache["current_date"] = now.strftime("%Y-%m-%d")
         timestamp_cache["current_time"] = now.strftime("%H:%M:%S")
@@ -57,65 +57,85 @@ def update_timestamp_cache():
 
 # Extract bot name and triggers from configuration and instructions
 def get_bot_names_and_triggers():
-    """Extract bot name and triggers for filtering search queries and smart triggers"""
-    bot_names = []
+    """
+    Get the configured bot names and trigger words
     
-    # Get triggers from config
-    triggers = []
-    if 'TRIGGER' in config and config['TRIGGER']:
-        triggers.extend([trigger.lower() for trigger in config['TRIGGER']])
+    Returns:
+        Tuple: (list of bot names, list of trigger words, list of prefixes, list of suffixes)
+    """
+    # Names should include the configured display name and common variants
+    bot_names = [
+        config.get('DISPLAY_NAME', 'Assistant').lower(),
+        'assistant',
+        'bot',
+        'ai',
+        'you',
+        'hand',  # Add the default bot name from config (Hand)
+    ]
     
-    # Try to extract name from instruction content
-    if bot_instructions:
-        # Look for common patterns where bot name might be defined
-        instruction_lines = bot_instructions.split('\n')
-        for line in instruction_lines:
-            line = line.lower()
-            
-            # Look for patterns like 'You are "Bot Name"' or 'You are Bot Name' or 'Your name is Bot Name'
-            name_patterns = [
-                r'you are ["\']([^"\']+)["\']',  # You are "Name"
-                r'you are (?:an?|the) ["\']([^"\']+)["\']',  # You are a/an/the "Name" 
-                r'you are (?:an?|the) ([A-Z][a-zA-Z0-9_\s]+)',  # You are a/an/the Name (capitalized)
-                r'your name is ["\']([^"\']+)["\']',  # Your name is "Name"
-                r'your name is ([A-Z][a-zA-Z0-9_\s]+)',  # Your name is Name (capitalized)
-                r'called ["\']([^"\']+)["\']',  # called "Name"
-                r'known as ["\']([^"\']+)["\']',  # known as "Name"
-            ]
-            
-            for pattern in name_patterns:
-                matches = re.findall(pattern, line)
-                if matches:
-                    for match in matches:
-                        # Clean the extracted name and add it if not already in list
-                        extracted_name = match.strip()
-                        if extracted_name and extracted_name.lower() not in [n.lower() for n in bot_names]:
-                            bot_names.append(extracted_name)
-                            
-                            # If the name starts with "the", also add version without "the"
-                            if extracted_name.lower().startswith("the "):
-                                bot_names.append(extracted_name[4:])
-
-    # Add some fallbacks if no names were found
-    if not bot_names:
-        instruction_name = config.get('DEFAULT_INSTRUCTION', 'bot')
-        bot_names = [instruction_name, "chatbot", "assistant", "bot"]
+    # Add custom names if configured
+    custom_names = config.get('BOT_NAMES', [])
+    if isinstance(custom_names, list) and custom_names:
+        bot_names.extend([name.lower() for name in custom_names])
     
-    # Process triggers to replace placeholders with actual values
-    processed_triggers = []
-    for trigger in triggers:
-        if "%BOT_NAME%" in trigger:
-            # Replace with each extracted bot name
-            for name in bot_names:
-                processed_triggers.append(trigger.replace("%BOT_NAME%", name.lower()))
-        elif "%BOT_NICKNAME%" in trigger or "%BOT_USERNAME%" in trigger:
-            # These will be handled dynamically at runtime in the message processing
-            processed_triggers.append(trigger)
-        else:
-            # Regular trigger word
-            processed_triggers.append(trigger)
+    # Deduplicate names
+    bot_names = list(set(bot_names))
     
-    return bot_names, processed_triggers
+    # Trigger words that might indicate the bot is being addressed
+    trigger_words = [
+        'hey',
+        'hi',
+        'hello', 
+        'help',
+        'explain',
+        'tell me',
+        'could you',
+        'can you',
+        'answer',
+        'solve',
+        'what is',
+        'how do',
+        'why is',
+        'assist'
+    ]
+    
+    # Command prefixes
+    prefixes = [
+        '!ask',
+        '/ask',
+        '.ask',
+        '!bot',
+        '/bot',
+        '!ai',
+        '/ai',
+        '!assistant',
+        '/assistant'
+    ]
+    
+    # Command suffixes
+    suffixes = [
+        '?',
+        'please',
+        'thanks',
+        'thank you'
+    ]
+    
+    # Add custom triggers if configured
+    custom_triggers = config.get('TRIGGER_WORDS', [])
+    if isinstance(custom_triggers, list) and custom_triggers:
+        trigger_words.extend([trigger.lower() for trigger in custom_triggers])
+    
+    # Add items from TRIGGER config list too (for backward compatibility)
+    if 'TRIGGER' in config and isinstance(config['TRIGGER'], list):
+        for trigger in config['TRIGGER']:
+            # Skip placeholder triggers as they'll be processed separately
+            if '%' not in trigger:
+                trigger_words.append(trigger.lower())
+    
+    # Deduplicate triggers
+    trigger_words = list(set(trigger_words))
+    
+    return bot_names, trigger_words, prefixes, suffixes
 
 # Initialize the client based on configuration
 def get_local_client():
@@ -203,19 +223,69 @@ class AIProvider:
             raise
 
 async def get_ai_provider():
-    """Get an AI provider instance for sequential thinking"""
-    global remote_client, local_client
+    """
+    Get the appropriate AI provider client with error handling
     
-    # Use local model if enabled in config
-    if config.get('USE_LOCAL_MODEL', False):
-        if local_client is None:
-            local_client = get_local_client()
-        return AIProvider(client=local_client, model=config.get('LOCAL_MODEL', 'local'))
-    else:
-        # Use remote model (default)
-        if remote_client is None:
-            remote_client = get_remote_client()
-        return AIProvider(client=remote_client, model=config.get('DEFAULT_MODEL', 'meta-llama/llama-4-maverick-17b-128e-instruct'))
+    Returns:
+        AIProvider: Configured AI provider client
+    """
+    global local_client, remote_client
+    use_local = config.get('USE_LOCAL_MODEL', False)
+    
+    # Always update timestamp cache when getting a provider
+    update_timestamp_cache()
+    
+    try:
+        # Check for offline mode
+        if is_offline_mode():
+            print("Operating in offline mode. Using fallback responses.")
+            return AIProvider(None, "fallback")
+
+        if use_local:
+            # Local LLM setup - lazily initialize to avoid startup delay
+            if local_client is None:
+                try:
+                    local_client = get_local_client()
+                    print("Successfully initialized local LLM client")
+                except Exception as e:
+                    print(f"Error initializing local client, falling back to remote: {e}")
+                    use_local = False
+            
+            if local_client is not None:
+                model = config.get('LOCAL_MODEL_NAME', 'local')
+                return AIProvider(local_client, model)
+        
+        # Remote setup with exponential backoff for rate limits
+        max_retries = 3
+        base_delay = 2  # Start with 2 second delay
+        
+        for retry in range(max_retries):
+            try:
+                remote_client = get_remote_client()
+                if remote_client:
+                    model = config.get('REMOTE_MODEL_NAME', 'gpt-3.5-turbo-16k')
+                    return AIProvider(remote_client, model)
+                break
+            except Exception as e:
+                if "rate_limit" in str(e).lower() and retry < max_retries - 1:
+                    # Exponential backoff: 2s, 4s, 8s
+                    delay = base_delay * (2 ** retry)
+                    print(f"Rate limited, retrying in {delay}s (attempt {retry+1}/{max_retries})")
+                    await asyncio.sleep(delay)
+                else:
+                    print(f"Error getting remote client: {e}")
+                    break
+
+        # If we got here with no working client, use fallback
+        print("No working AI provider found. Using fallback responses.")
+        record_llm_failure("api_unreachable")
+        return AIProvider(None, "fallback")
+        
+    except Exception as e:
+        print(f"Critical error in get_ai_provider: {e}")
+        # Emergency fallback
+        record_llm_failure("critical_error")
+        return AIProvider(None, "fallback")
 
 # Common cryptocurrency names and their CoinGecko IDs
 CRYPTO_MAPPING = {
@@ -556,11 +626,55 @@ async def stream_response(messages, model, client):
         fallback_msg = "I encountered an error connecting to the AI service. Please try again later."
         yield fallback_msg
 
-async def generate_response(instructions, history, stream=False):
+async def generate_response(instructions, history=None, model=None, stream=False, temperature=None, max_tokens=None):
+    """
+    Generate a response using either OpenAI or local model
+    
+    Args:
+        instructions: Instructions or prompt (can be string or coroutine)
+        history: Optional conversation history
+        model: Optional model override
+        stream: Whether to stream the response
+        temperature: Optional temperature setting
+        max_tokens: Optional max tokens setting
+        
+    Returns:
+        str or StreamingResponse: The generated response
+    """
     global local_client, remote_client
     
-    # Update timestamp cache to ensure current date/time information
-    update_timestamp_cache()
+    # Handle empty history
+    if history is None:
+        history = []
+    
+    # Prepare timestamp info for context
+    # Using a cache to avoid repeated date/time lookups
+    if 'timestamp_cache' not in globals():
+        global timestamp_cache
+        timestamp_cache = {}
+    
+    # Update timestamp cache every 60 seconds
+    current_time = time.time()
+    if 'last_update' not in timestamp_cache or current_time - timestamp_cache.get('last_update', 0) > 60:
+        now = datetime.now(timezone.utc)
+        timestamp_cache = {
+            'last_update': current_time,
+            'current_date': now.strftime('%Y-%m-%d'),
+            'current_time': now.strftime('%H:%M:%S'),
+            'current_year': now.year,
+            'current_month': now.month,
+            'current_day': now.day,
+        }
+    
+    # Explicitly add current date/time info to the instructions
+    current_time_info = f"\n\nThe current date and time is {timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC. Today is {timestamp_cache['current_year']}-{timestamp_cache['current_month']:02d}-{timestamp_cache['current_day']:02d}."
+    
+    # Handle instructions that might be a coroutine
+    if asyncio.iscoroutine(instructions):
+        instructions = await instructions
+    
+    # Now that we have the instructions string, add all context
+    enhanced_instructions = instructions + current_time_info
     
     # Check if we're in offline mode (LLM unavailable)
     if is_offline_mode():
@@ -621,7 +735,7 @@ async def generate_response(instructions, history, stream=False):
         search_query = latest_message
         
         # Get bot name and triggers dynamically
-        bot_names, trigger_words = get_bot_names_and_triggers()
+        bot_names, trigger_words, prefixes, suffixes = get_bot_names_and_triggers()
         
         # Remove bot name references from the query
         for name in bot_names:
@@ -688,12 +802,6 @@ async def generate_response(instructions, history, stream=False):
                     current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
                     internet_context = f"\n\nHere is some real-time information from the internet that might help you answer this query:\n{internet_results}\n\nUse this information to provide an up-to-date response. The current date and time is {current_datetime}."
     
-    # Explicitly add current date/time info to the instructions
-    current_time_info = f"\n\nThe current date and time is {timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC. Today is {timestamp_cache['current_year']}-{timestamp_cache['current_month']:02d}-{timestamp_cache['current_day']:02d}."
-    
-    # Add all context to instructions
-    enhanced_instructions = instructions + current_time_info
-    
     # Add news context if found
     if news_context:
         enhanced_instructions += f"\n\n{news_context}\nUse this real-time news information to provide an up-to-date response about current events."
@@ -703,9 +811,19 @@ async def generate_response(instructions, history, stream=False):
         enhanced_instructions += internet_context
     
     messages = [
-            {"role": "system", "name": "instructions", "content": enhanced_instructions},
-            *history,
+            {"role": "system", "content": enhanced_instructions},
         ]
+        
+    # Convert user messages to correct format - GROQ API doesn't support 'user' field, only 'name'
+    for msg in history:
+        message_copy = dict(msg)  # Create a copy of the message
+        # Convert 'user' field to 'name' field for user messages
+        if "user" in message_copy and message_copy["role"] == "user":
+            message_copy["name"] = message_copy.pop("user")
+        # Convert 'metadata' field to 'name' field for assistant messages
+        if "metadata" in message_copy and message_copy["role"] == "assistant":
+            message_copy["name"] = message_copy.pop("metadata")
+        messages.append(message_copy)
     
     # Prepare to handle potential failures
     try:
@@ -759,6 +877,7 @@ async def generate_response(instructions, history, stream=False):
         else:
             # Using remote API with tools
             print("Using remote LLM (GROQ API)")
+            # Initialize remote_client if it's None
             if remote_client is None:
                 remote_client = get_remote_client()
                 
@@ -1016,7 +1135,7 @@ async def text_to_speech(text):
     bytes_obj.seek(0)
     return bytes_obj
 
-def create_prompt(message, username, user_id, channel, conversation_history=None, enhanced_instructions=None):
+async def create_prompt(message, username, user_id, channel, conversation_history=None, enhanced_instructions=None):
     """
     Create a prompt for the AI model
     
@@ -1093,14 +1212,19 @@ Conversation History:
 
 User ({username}): {message}"""
     
+    # Add special context for the bot owner if applicable
+    prompt = await add_owner_context(prompt, user_id)
+    
     return prompt
 
-async def should_use_sequential_thinking(prompt):
+async def should_use_sequential_thinking(prompt, user_id=None, channel_id=None):
     """
     Determine if a query should use sequential thinking based on its complexity or nature.
     
     Args:
         prompt: The user's prompt/query
+        user_id: The ID of the user who sent the message (optional)
+        channel_id: The ID of the channel where the message was sent (optional)
         
     Returns:
         Tuple: (use_sequential, complexity_score, reasoning)
@@ -1124,7 +1248,18 @@ async def should_use_sequential_thinking(prompt):
         "procedure",
         "instructions",
         "guide me",
-        "tutorial"
+        "tutorial",
+        "analyze",
+        "analyse",
+        "examine",
+        "investigate",
+        "explore",
+        "develop",
+        "explain",
+        "elaborate",
+        "describe in detail",
+        "evaluate",
+        "assess"
     ]
     
     # Topics that typically benefit from sequential thinking
@@ -1145,16 +1280,30 @@ async def should_use_sequential_thinking(prompt):
         "learn", "understand", "explain", "concept", "principle", "theory", "framework",
         
         # Planning
-        "plan", "strategy", "approach", "organize", "outline", "blueprint", "roadmap"
+        "plan", "strategy", "approach", "organize", "outline", "blueprint", "roadmap",
+        
+        # Analysis
+        "review", "critique", "interpret", "breakdown", "dissect", "deconstruct",
+        
+        # Problem-solving
+        "resolve", "solution", "tackle", "address", "overcome", "handle",
+        
+        # Decision making
+        "decide", "choice", "option", "alternative", "recommendation", "pros and cons",
+        
+        # Complex tasks
+        "complex", "complicated", "intricate", "sophisticated", "advanced"
     ]
     
     # Complex query indicators
     complexity_indicators = {
         "multi-step": ["step", "phase", "stage", "part", "section"],
-        "detail-oriented": ["detail", "specific", "precisely", "exactly", "thoroughly"],
-        "comparative": ["compare", "contrast", "versus", "vs", "difference", "similarity"],
-        "process-focused": ["process", "procedure", "workflow", "pipeline", "sequence"],
-        "analytical": ["analyze", "examine", "investigate", "assess", "evaluate"]
+        "detail-oriented": ["detail", "specific", "precisely", "exactly", "thoroughly", "comprehensive", "complete"],
+        "comparative": ["compare", "contrast", "versus", "vs", "difference", "similarity", "distinction"],
+        "process-focused": ["process", "procedure", "workflow", "pipeline", "sequence", "methodology"],
+        "analytical": ["analyze", "examine", "investigate", "assess", "evaluate", "consider", "reflect"],
+        "reasoning": ["reason", "logic", "rationale", "justification", "basis", "grounds"],
+        "systematic": ["system", "framework", "structure", "organization", "arrangement"]
     }
     
     # Calculate a complexity score
@@ -1162,28 +1311,29 @@ async def should_use_sequential_thinking(prompt):
     
     # Check for explicit sequential thinking indicators (highest weight)
     for indicator in explicit_indicators:
-        if indicator in prompt_lower:
+        # Look for whole word matches or phrases
+        if re.search(r'\b' + re.escape(indicator) + r'\b', prompt_lower) or indicator in prompt_lower:
             # Strong signal, high weight
             complexity_score += 2.0
-            reasoning = f"Contains explicit sequential indicator: '{indicator}'"
+            reasoning = f"Sequential thinking recommended due to complexity indicators"
             return True, complexity_score, reasoning
     
     # Check for topic-specific indicators
     topic_matches = []
     for indicator in topic_indicators:
-        if indicator in prompt_lower:
+        if re.search(r'\b' + re.escape(indicator) + r'\b', prompt_lower) or indicator in prompt_lower:
             topic_matches.append(indicator)
             complexity_score += 0.5  # Medium weight
     
     if len(topic_matches) >= 2:  # At least two topic indicators
-        reasoning = f"Contains multiple sequential topic indicators: {', '.join(topic_matches[:3])}"
+        reasoning = f"Sequential thinking recommended for complex topic"
         return True, complexity_score, reasoning
             
     # Check for complexity indicators
     complexity_matches = []
     for category, indicators in complexity_indicators.items():
         for indicator in indicators:
-            if indicator in prompt_lower:
+            if re.search(r'\b' + re.escape(indicator) + r'\b', prompt_lower) or indicator in prompt_lower:
                 complexity_matches.append(f"{category}:{indicator}")
                 complexity_score += 0.3  # Lower weight
     
@@ -1191,8 +1341,8 @@ async def should_use_sequential_thinking(prompt):
     
     # Long prompts tend to be complex queries
     word_count = len(prompt.split())
-    if word_count > 20:  # Long query
-        complexity_score += 0.1 * min(5, (word_count - 20) / 10)  # Cap at +0.5
+    if word_count > 15:  # Lower threshold for long query
+        complexity_score += 0.1 * min(5, (word_count - 15) / 10)  # Cap at +0.5
     
     # Questions with multiple parts or sub-questions
     question_count = prompt.count("?")
@@ -1203,7 +1353,9 @@ async def should_use_sequential_thinking(prompt):
     structural_patterns = [
         r"(\d+)[.)]", # Numbered lists
         r"(first|second|third|finally)[\s:,]", # Ordered steps 
-        r"(before|after|then|next|subsequently)[\s,]" # Sequential terms
+        r"(before|after|then|next|subsequently)[\s,]", # Sequential terms
+        r"(why|how|what if|when)[\s\?]", # Analytical questions
+        r"(because|due to|as a result|therefore|consequently)[\s,]" # Reasoning terms
     ]
     
     for pattern in structural_patterns:
@@ -1212,15 +1364,78 @@ async def should_use_sequential_thinking(prompt):
             complexity_score += 0.3
             complexity_matches.append(f"structure:{matches[0]}")
             
-    # Decision threshold: if score is high enough, use sequential thinking
-    threshold = 1.0
+    # Decision threshold: lower threshold to trigger sequential thinking more often
+    threshold = 0.8
     use_sequential = complexity_score >= threshold
     
     if complexity_matches:
-        reasoning = f"Complexity indicators: {', '.join(complexity_matches[:3])}"
+        reasoning = f"Sequential thinking evaluation based on query complexity"
     elif topic_matches:
-        reasoning = f"Topic indicators: {', '.join(topic_matches[:3])}"
+        reasoning = f"Sequential thinking evaluation based on topic indicators"
     else:
-        reasoning = f"General complexity score: {complexity_score:.2f}"
+        reasoning = f"General complexity analysis"
         
     return use_sequential, complexity_score, reasoning
+
+async def is_bot_master(user_id):
+    """
+    Check if the user is the bot's master/owner
+    
+    Args:
+        user_id: The user ID to check
+        
+    Returns:
+        bool: True if this is the bot's master
+    """
+    from bot_utilities.config_loader import config
+    
+    # Get owner ID from config
+    owner_id = config.get('BOT_OWNER', "818806194608013313")  # Default to Paws ID if not configured
+    
+    # Convert both to strings to ensure comparison works
+    user_id = str(user_id)
+    owner_id = str(owner_id)
+    
+    return user_id == owner_id
+
+async def add_owner_context(prompt, user_id):
+    """
+    Add context awareness when talking to the bot owner
+    
+    Args:
+        prompt: The original prompt
+        user_id: The user ID
+        
+    Returns:
+        str: Enhanced prompt with owner context if applicable
+    """
+    # Check if this is the bot owner
+    is_owner = await is_bot_master(user_id)
+    if not is_owner:
+        return prompt
+    
+    # Add natural context for the owner (Paws)
+    owner_context = """
+This conversation is with Paws, the creator and developer of this bot.
+Paws appreciates technical, detailed, and thorough responses.
+Incorporate insights about AI development, programming concepts, and technical details when relevant.
+Remember previous conversations and be consistent with your responses to maintain context.
+"""
+    
+    # Check if prompt has a system section we can add to
+    if "System:" in prompt:
+        # Find and enhance the system section
+        parts = prompt.split("System:", 1)
+        system_parts = parts[1].split("\n\n", 1)
+        
+        # Add owner context to the system part
+        enhanced_system = system_parts[0] + "\n" + owner_context
+        
+        # Rebuild the prompt
+        if len(system_parts) > 1:
+            return parts[0] + "System:" + enhanced_system + "\n\n" + system_parts[1]
+        else:
+            return parts[0] + "System:" + enhanced_system
+    else:
+        # Add as a prefix if no System section found
+        return owner_context + "\n\n" + prompt

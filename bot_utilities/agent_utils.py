@@ -305,4 +305,84 @@ async def run_agent(query: str, user_id: str = None, channel_id: str = None, ser
             
         return response
     
-    return "I couldn't process that request. Please try again." 
+    return "I couldn't process that request. Please try again."
+
+async def determine_best_reasoning_method(query: str) -> dict:
+    """
+    Determine the best reasoning method for a given query by analyzing its content.
+    
+    Args:
+        query: The user's query
+        
+    Returns:
+        dict: Analysis results with recommended method and reasoning
+    """
+    from bot_utilities.reasoning_router import create_reasoning_router
+    
+    # Create reasoning router instance
+    router = create_reasoning_router()
+    
+    # Analyze the query
+    analysis = await router.analyze_query(query)
+    
+    # Prepare response with reasoning
+    reasoning = "Standard processing"
+    
+    if analysis.recommended_method == "react":
+        reasoning = "Using ReAct pattern for real-time factual information or tool use"
+    elif analysis.recommended_method == "verification":
+        reasoning = "Using Chain-of-Verification for fact checking and verification"
+    elif analysis.recommended_method == "sequential":
+        reasoning = "Using Sequential Thinking for complex, multi-step reasoning"
+    elif analysis.recommended_method == "reflective_rag":
+        reasoning = "Using Self-Reflective RAG for complex information retrieval with verification"
+    elif analysis.recommended_method == "speculative_rag":
+        reasoning = "Using Speculative RAG for knowledge-based information retrieval"
+    
+    return {
+        "method": analysis.recommended_method,
+        "is_complex": analysis.is_complex,
+        "needs_reasoning": analysis.needs_reasoning,
+        "needs_verification": analysis.needs_verification,
+        "needs_rag": analysis.needs_rag,
+        "needs_tools": analysis.needs_tools,
+        "reasoning": reasoning
+    }
+
+async def get_reasoning_router_context(query: str, server_id: str = None) -> str:
+    """
+    Get RAG context from the appropriate reasoning router for a query
+    
+    Args:
+        query: The user's query
+        server_id: Optional server ID for RAG
+        
+    Returns:
+        str: Retrieved context from the appropriate RAG system
+    """
+    from bot_utilities.reasoning_router import create_reasoning_router
+    
+    # Create reasoning router instance
+    router = create_reasoning_router(server_id)
+    
+    # Analyze the query
+    analysis = await router.analyze_query(query)
+    
+    # Determine which RAG system to use
+    if analysis.recommended_method == "reflective_rag" and router.reflective_rag:
+        # Get context from Reflective RAG for complex queries
+        return await router.reflective_rag.format_reflective_results(
+            query=query,
+            threshold=0.7,
+            k=5
+        )
+    elif (analysis.recommended_method == "speculative_rag" or analysis.needs_rag) and router.speculative_rag:
+        # Get context from Speculative RAG for standard information queries
+        return await router.speculative_rag.format_as_context(
+            question=query,
+            relevance_threshold=0.6,
+            max_docs=3
+        )
+    
+    # Return empty string if no RAG system is appropriate
+    return "" 

@@ -214,42 +214,35 @@ and converging on a solution. Label different thought branches clearly.
                 except asyncio.TimeoutError:
                     print(f"Timeout after {timeout}s while waiting for LLM response")
                     # Fall back to domain-specific response
-                    fallback = await self._get_domain_specific_fallback(prompt_lower)
-                    return fallback
+                    return self._get_domain_specific_fallback(prompt_lower)
                 except Exception as e:
                     print(f"Error calling LLM: {e}")
                     # Try to get fallback from cache
-                    try:
-                        fallback = await get_fallback_response(prompt)
-                        if fallback:
-                            return fallback
-                    except:
-                        # Fall back to domain-specific response
-                        fallback = await self._get_domain_specific_fallback(prompt_lower)
+                    fallback = get_fallback_response(prompt)
+                    if fallback:
                         return fallback
+                    
+                    # Fall back to domain-specific response
+                    return self._get_domain_specific_fallback(prompt_lower)
             else:
                 print("No LLM provider available")
                 # Try to get fallback from cache
-                try:
-                    fallback = await get_fallback_response(prompt)
-                    if fallback:
-                        return fallback
-                except:
-                    # Fall back to domain-specific response
-                    fallback = await self._get_domain_specific_fallback(prompt_lower)
+                fallback = get_fallback_response(prompt)
+                if fallback:
                     return fallback
+                
+                # Fall back to domain-specific response
+                return self._get_domain_specific_fallback(prompt_lower)
                 
         except Exception as e:
             print(f"Critical error in _call_llm: {e}")
             # Try to get fallback from cache
-            try:
-                fallback = await get_fallback_response(prompt)
-                if fallback:
-                    return fallback
-            except:
-                # Fall back to domain-specific response as final resort
-                fallback = await self._get_domain_specific_fallback(prompt_lower)
+            fallback = get_fallback_response(prompt)
+            if fallback:
                 return fallback
+            
+            # Fall back to domain-specific response as final resort
+            return self._get_domain_specific_fallback(prompt_lower)
 
     def _get_tech_fallback_response(self, prompt_lower):
         """Generate a technology domain fallback response"""
@@ -662,34 +655,6 @@ THOUGHT GRAPH STRUCTURE:
 - I'll identify critical insights with "Key Insight:" labels
 
 Let me build this thought graph to solve the problem:
-
-"""
-
-    def _create_cov_prompt(self, problem: str) -> str:
-        """
-        Create a chain-of-verification prompt for verification-based problem solving.
-        
-        Args:
-            problem: The problem to solve
-            
-        Returns:
-            str: A structured prompt for chain-of-verification
-        """
-        return f"""I need to solve this problem: {problem}
-
-To solve this effectively, I'll use chain-of-verification reasoning, where I verify each step of my thinking:
-
-1. First, I'll carefully understand the problem
-2. I'll break it down into key components
-3. I'll solve each component step by step
-4. Most importantly, I'll verify each part of my reasoning by:
-   - Checking for factual accuracy
-   - Ensuring logical consistency
-   - Looking for alternative explanations
-   - Identifying potential biases or errors
-5. Finally, I'll revise my answer based on my verification
-
-Let me work through this carefully, with explicit verification steps:
 
 """
 
@@ -1445,93 +1410,63 @@ I'm here to help, so feel free to rephrase or simplify your question."""
     
     def _parse_got_output(self, output: str) -> str:
         """
-        Parse output from a Graph-of-Thought reasoning process
+        Parse Graph-of-Thought output into a more readable format
         
         Args:
-            output: The raw output to parse
+            output: Raw LLM output
             
         Returns:
-            str: The parsed and formatted output
+            str: Formatted output for display
         """
-        # For GOT responses, we want to preserve the branching structure
-        # but remove any unnecessary markers or prefixes
+        # Start with a clean output
+        formatted = ""
         
-        # Check if this is already a clean output
-        if "**Thought" not in output and "**Branch" not in output:
-            return output
+        # Extract thinking branches
+        branch_pattern = re.compile(r'Branch\s+(\w+)[:\)\.]\s*(.*?)(?=Branch\s+\w+[:\)\.]|Convergence|Conclusion|$)', re.DOTALL | re.IGNORECASE)
+        branches = branch_pattern.findall(output)
+        
+        # Extract convergence/conclusion
+        conclusion_pattern = re.compile(r'(?:Convergence|Conclusion)[:\)\.]\s*(.*?)$', re.DOTALL | re.IGNORECASE)
+        conclusion_match = conclusion_pattern.search(output)
+        conclusion = conclusion_match.group(1).strip() if conclusion_match else ""
+        
+        # Parse branch connections
+        connection_pattern = re.compile(r'Connection[:\)\.]\s*(.*?)(?=Branch|Connection|Convergence|Conclusion|$)', re.DOTALL | re.IGNORECASE)
+        connections = connection_pattern.findall(output)
+        
+        # If we found structured graph elements, format them
+        if branches or conclusion:
+            # Process branches
+            if branches:
+                formatted += "**Key Insights:**\n\n"
+                for branch_id, branch_content in branches:
+                    formatted += f"**{branch_id}**: {branch_content.strip()}\n\n"
             
-        # Remove heading prefixes but keep structure
-        cleaned = re.sub(r'^\s*\*{0,2}(Thought|Branch|Root|Node|Connection|Path)\s*\d*\*{0,2}:\s*', '**Thought**: ', output, flags=re.MULTILINE)
-        
-        # Clean up extra formatting and standardize
-        cleaned = re.sub(r'^\s*\*{0,2}(Summary|Conclusion|Final Answer|Answer)\*{0,2}:\s*', '**Conclusion**: ', cleaned, flags=re.MULTILINE)
-        
-        # Find just the conclusion section if it exists
-        conclusion_match = re.search(r'\*\*Conclusion\*\*:.*?$', cleaned, re.DOTALL)
-        if conclusion_match:
-            conclusion = conclusion_match.group(0)
-            # Remove any markdown formatting from the conclusion
-            conclusion = re.sub(r'\*\*|\*', '', conclusion)
-            conclusion = re.sub(r'Conclusion:', '', conclusion, 1).strip()
-            return conclusion
-        
-        # If no conclusion, return the whole cleaned text
-        return cleaned
-        
-    def format_response(self, response: Union[str, Tuple]) -> str:
-        """
-        Format a response for better readability
-        
-        Args:
-            response: The raw response to format (can be a string or tuple)
+            # Process connections if found
+            if connections:
+                formatted += "**Connections:**\n\n"
+                for connection in connections:
+                    formatted += f"- {connection.strip()}\n"
+                formatted += "\n"
             
-        Returns:
-            str: The formatted response
-        """
-        # Handle case where response is already a tuple (response_text, metadata)
-        if isinstance(response, tuple):
-            if len(response) >= 1:
-                response_text = response[0]
-            else:
-                response_text = "Error: Empty response tuple"
+            # Add conclusion
+            if conclusion:
+                formatted += f"**Conclusion:**\n\n{conclusion}\n"
         else:
-            response_text = response
+            # Fallback to extracting any bullet points if structured format isn't found
+            bullet_pattern = re.compile(r'(?:^|\n)[\-\*•]\s*(.*?)(?=$|\n[\-\*•])', re.DOTALL)
+            bullets = bullet_pattern.findall(output)
             
-        # Guard against non-string input
-        if not isinstance(response_text, str):
-            try:
-                response_text = str(response_text)
-            except:
-                return "Error: Unable to format response - received non-string input"
+            if bullets:
+                formatted += "**Key Points:**\n\n"
+                for bullet in bullets:
+                    formatted += f"• {bullet.strip()}\n\n"
+            else:
+                # Last resort: return the original text with minimal cleaning
+                return self._clean_text(output)
         
-        # Remove any tuple artifacts that might have been stringified
-        if "(" in response_text and "," in response_text and ")" in response_text:
-            # This might be a stringified tuple - try to extract just the text portion
-            try:
-                # Extract content between first quotes if it looks like a tuple with metadata
-                match = re.search(r"^\s*\(\s*['\"](.+?)['\"]", response_text, re.DOTALL) 
-                if match:
-                    response_text = match.group(1)
-            except:
-                # If regex extraction fails, keep original
-                pass
-                
-        # Clean up any conclusion artifacts from output
-        response_text = response_text.replace("Conclusion: ", "")
+        return formatted.strip()
         
-        # Remove metadata-like patterns that might have leaked into the text
-        response_text = re.sub(r"\{'method':.*?\}", "", response_text).strip()
-        response_text = re.sub(r"\('.*?', \{'method':.*?\}\)", r"\1", response_text).strip()
-                
-        # Remove stringified tuple patterns 
-        response_text = re.sub(r"^\s*\(\s*['\"](.+?)['\"].*?$", r"\1", response_text)
-        
-        # Remove any remaining quotes or parentheses at the beginning/end
-        response_text = response_text.strip('"\'() ')
-            
-        # Pass the extracted string to the internal formatting method
-        return self._clean_and_format_response(response_text, "sequential")
-    
     async def _create_got_prompt(self, problem: str, context: Optional[Dict[str, Any]] = None) -> str:
         """Create a prompt for Graph-of-Thought reasoning
         
@@ -1757,43 +1692,5 @@ Now, please solve the problem for {username} using this Graph-of-Thought approac
                 temperature=temperature,
                 max_tokens=max_tokens
             )
-
-    async def _get_domain_specific_fallback(self, prompt_lower):
-        """
-        Get a domain-specific fallback response based on prompt content
-        
-        Args:
-            prompt_lower: Lowercase prompt text for analysis
-            
-        Returns:
-            str: Domain-specific fallback response
-        """
-        # Handle specific cases
-        if "cortana" in prompt_lower:
-            return "I'm not Cortana. I'm a custom AI assistant built to help with your questions and tasks."
-        
-        if "siri" in prompt_lower:
-            return "I'm not Siri. I'm a custom AI assistant that can help answer your questions."
-            
-        if "alexa" in prompt_lower:
-            return "I'm not Alexa. I'm a custom AI assistant available to help with information and tasks through text."
-            
-        # Try to get a fallback response based on prompt analysis
-        try:
-            fallback = await get_fallback_response(prompt_lower)
-            return fallback
-        except Exception:
-            # If fallback fails, return a very generic response
-            return "I'm currently experiencing technical difficulties. Please try a different query or try again later."
-
-def create_sequential_thinking(llm_provider=None):
-    """
-    Factory function to create a sequential thinking instance
-    
-    Args:
-        llm_provider: Optional LLM provider to use for the instance
-        
-    Returns:
-        SequentialThinking: A new instance of the SequentialThinking class
-    """
-    return SequentialThinking(llm_provider=llm_provider)
+```
+""" 
