@@ -21,6 +21,9 @@ Command modules that provide slash commands and other functionalities:
 - **MCPAgentCog.py**: Additional agent capabilities
 - **ReflectiveRAGCog.py**: Enhanced RAG for improved answers
 - **StatsCog.py**: Bot statistics and performance monitoring
+- **VoiceCog.py**: Voice message transcription features
+- **SentimentCog.py**: Sentiment and emotion analysis
+- **NekoCog.py**: Fun reaction GIF commands
 
 ### 3. Event Handlers (cogs/event_cogs/)
 - **on_message.py**: Handles regular text messages and bot responses
@@ -32,7 +35,8 @@ Command modules that provide slash commands and other functionalities:
 #### AI and LLM Interaction
 - **ai_utils.py**: Main interface to language models, handles prompt creation, streaming, etc.
 - **agent_utils.py**: Agent system using LangChain for complex reasoning and tool use
-- **multimodal_utils.py**: Handling images, generation, and vision capabilities
+- **multimodal_utils.py**: Handling images, voice transcription, and vision capabilities
+- **sentiment_utils.py**: Sentiment and emotion analysis of text messages
 
 #### Memory and Knowledge Management
 - **memory_utils.py**: Manages conversation history and user preferences
@@ -77,6 +81,8 @@ The bot is designed to be easily extended:
 3. **New Language Support**: Add language file to lang/ directory
 4. **New Image Generation Models**: Add to the models list in ImageCog.py
 5. **New Agent Tools**: Extend the tools in agent_utils.py
+6. **New Multimodal Features**: Extend the ImageProcessor class in multimodal_utils.py
+7. **New Analysis Tools**: Add new analysis utilities like sentiment_utils.py
 
 ## Configuration System
 
@@ -92,3 +98,22 @@ The bot uses a layered configuration approach:
 - **Rate Limiting**: Commands use typing indicators and deferrals to avoid rate limits
 - **Fallback Mechanisms**: Systems fall back to simpler methods when primary methods fail
 - **Caching**: Frequently accessed data is cached to improve performance 
+
+## Multi-Modal Processing
+
+The bot has advanced multi-modal capabilities:
+
+### Image Processing
+- **Image Analysis**: The `ImageProcessor` class in multimodal_utils.py handles image analysis
+- **OCR**: Text extraction from images using vision models
+- **Image Generation**: The `ImageGenerator` class handles image creation with various models
+
+### Voice Processing
+- **Voice Transcription**: Audio processing to convert voice messages to text
+- **Voice Commands**: Support for voice message commands with text prefixes
+- **Text-to-Speech**: Converting text responses to voice messages
+
+### Text Analysis
+- **Sentiment Analysis**: The `SentimentAnalyzer` class in sentiment_utils.py analyzes emotions
+- **Emotion Detection**: Identifying and rating emotions in text
+- **Content Summarization**: Condensing and extracting key information 

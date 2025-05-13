@@ -1,1 +1,14 @@
-{}
+{
+  "sequential_thinking_command": {
+    "total_calls": 1,
+    "calls_by_day": {
+      "2025-05-13": 1
+    }
+  },
+  "sequential_thinking_text": {
+    "total_calls": 5,
+    "calls_by_day": {
+      "2025-05-13": 5
+    }
+  }
+}

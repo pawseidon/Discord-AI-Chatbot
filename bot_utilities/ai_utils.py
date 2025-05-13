@@ -57,12 +57,13 @@ def update_timestamp_cache():
 
 # Extract bot name and triggers from configuration and instructions
 def get_bot_names_and_triggers():
-    """Extract bot name and triggers for filtering search queries"""
+    """Extract bot name and triggers for filtering search queries and smart triggers"""
     bot_names = []
     
     # Get triggers from config
+    triggers = []
     if 'TRIGGER' in config and config['TRIGGER']:
-        bot_names.extend([trigger.lower() for trigger in config['TRIGGER']])
+        triggers.extend([trigger.lower() for trigger in config['TRIGGER']])
     
     # Try to extract name from instruction content
     if bot_instructions:
@@ -70,25 +71,51 @@ def get_bot_names_and_triggers():
         instruction_lines = bot_instructions.split('\n')
         for line in instruction_lines:
             line = line.lower()
-            # Look for patterns like 'You are "Bot Name"' or 'You are Bot Name'
-            if 'you are' in line and ('"' in line or "'" in line):
-                # Extract text between quotes if present
-                for quote_type in ['"', "'"]:
-                    if quote_type in line:
-                        parts = line.split(quote_type)
-                        if len(parts) >= 3:  # At least one quoted string
-                            quoted_text = parts[1].strip()
-                            if quoted_text and quoted_text.lower() not in bot_names:
-                                bot_names.append(quoted_text.lower())
-                                # Also add without "the" if it starts with "the "
-                                if quoted_text.lower().startswith("the "):
-                                    bot_names.append(quoted_text.lower()[4:])
+            
+            # Look for patterns like 'You are "Bot Name"' or 'You are Bot Name' or 'Your name is Bot Name'
+            name_patterns = [
+                r'you are ["\']([^"\']+)["\']',  # You are "Name"
+                r'you are (?:an?|the) ["\']([^"\']+)["\']',  # You are a/an/the "Name" 
+                r'you are (?:an?|the) ([A-Z][a-zA-Z0-9_\s]+)',  # You are a/an/the Name (capitalized)
+                r'your name is ["\']([^"\']+)["\']',  # Your name is "Name"
+                r'your name is ([A-Z][a-zA-Z0-9_\s]+)',  # Your name is Name (capitalized)
+                r'called ["\']([^"\']+)["\']',  # called "Name"
+                r'known as ["\']([^"\']+)["\']',  # known as "Name"
+            ]
+            
+            for pattern in name_patterns:
+                matches = re.findall(pattern, line)
+                if matches:
+                    for match in matches:
+                        # Clean the extracted name and add it if not already in list
+                        extracted_name = match.strip()
+                        if extracted_name and extracted_name.lower() not in [n.lower() for n in bot_names]:
+                            bot_names.append(extracted_name)
+                            
+                            # If the name starts with "the", also add version without "the"
+                            if extracted_name.lower().startswith("the "):
+                                bot_names.append(extracted_name[4:])
 
     # Add some fallbacks if no names were found
     if not bot_names:
-        bot_names = ["chatbot", "assistant", "bot"]
+        instruction_name = config.get('DEFAULT_INSTRUCTION', 'bot')
+        bot_names = [instruction_name, "chatbot", "assistant", "bot"]
     
-    return bot_names
+    # Process triggers to replace placeholders with actual values
+    processed_triggers = []
+    for trigger in triggers:
+        if "%BOT_NAME%" in trigger:
+            # Replace with each extracted bot name
+            for name in bot_names:
+                processed_triggers.append(trigger.replace("%BOT_NAME%", name.lower()))
+        elif "%BOT_NICKNAME%" in trigger or "%BOT_USERNAME%" in trigger:
+            # These will be handled dynamically at runtime in the message processing
+            processed_triggers.append(trigger)
+        else:
+            # Regular trigger word
+            processed_triggers.append(trigger)
+    
+    return bot_names, processed_triggers
 
 # Initialize the client based on configuration
 def get_local_client():
@@ -152,6 +179,43 @@ def get_remote_client():
 # Create client when needed (not at module import time)
 local_client = None
 remote_client = None
+
+# Create a simple AI provider class for sequential thinking
+class AIProvider:
+    def __init__(self, client=None, model=None):
+        self.client = client
+        self.model = model or config.get('DEFAULT_MODEL', 'meta-llama/llama-4-maverick-17b-128e-instruct')
+        
+    async def async_call(self, prompt, temperature=0.2, max_tokens=2000):
+        """Call the LLM with a prompt and return the text response"""
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=False
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"Error in AIProvider.async_call: {e}")
+            raise
+
+async def get_ai_provider():
+    """Get an AI provider instance for sequential thinking"""
+    global remote_client, local_client
+    
+    # Use local model if enabled in config
+    if config.get('USE_LOCAL_MODEL', False):
+        if local_client is None:
+            local_client = get_local_client()
+        return AIProvider(client=local_client, model=config.get('LOCAL_MODEL', 'local'))
+    else:
+        # Use remote model (default)
+        if remote_client is None:
+            remote_client = get_remote_client()
+        return AIProvider(client=remote_client, model=config.get('DEFAULT_MODEL', 'meta-llama/llama-4-maverick-17b-128e-instruct'))
 
 # Common cryptocurrency names and their CoinGecko IDs
 CRYPTO_MAPPING = {
@@ -557,7 +621,7 @@ async def generate_response(instructions, history, stream=False):
         search_query = latest_message
         
         # Get bot name and triggers dynamically
-        bot_names = get_bot_names_and_triggers()
+        bot_names, trigger_words = get_bot_names_and_triggers()
         
         # Remove bot name references from the query
         for name in bot_names:
@@ -1030,3 +1094,133 @@ Conversation History:
 User ({username}): {message}"""
     
     return prompt
+
+async def should_use_sequential_thinking(prompt):
+    """
+    Determine if a query should use sequential thinking based on its complexity or nature.
+    
+    Args:
+        prompt: The user's prompt/query
+        
+    Returns:
+        Tuple: (use_sequential, complexity_score, reasoning)
+    """
+    # Normalize prompt to lowercase for easier pattern matching
+    prompt_lower = prompt.lower()
+    
+    # Direct indicators that sequential thinking should be used
+    explicit_indicators = [
+        "step by step", 
+        "sequential", 
+        "in sequence", 
+        "one by one",
+        "first", "second", "third", "fourth", "fifth", 
+        "break down", 
+        "detailed explanation",
+        "explain thoroughly",
+        "walk me through",
+        "walkthrough",
+        "how to",
+        "procedure",
+        "instructions",
+        "guide me",
+        "tutorial"
+    ]
+    
+    # Topics that typically benefit from sequential thinking
+    topic_indicators = [
+        # Technical procedures
+        "solve", "algorithm", "code", "program", "implement", "function", "method",
+        
+        # Mathematics/puzzles
+        "equation", "problem", "formula", "calculate", "math", "puzzle", "riddle", "rubik", "cube", "sudoku",
+        
+        # DIY/manual tasks
+        "build", "create", "make", "construct", "assemble", "install", "fix", "repair", "troubleshoot", 
+        
+        # Recipes/cooking
+        "recipe", "cook", "bake", "prepare", "mix", "blend", "food",
+        
+        # Learning/educational
+        "learn", "understand", "explain", "concept", "principle", "theory", "framework",
+        
+        # Planning
+        "plan", "strategy", "approach", "organize", "outline", "blueprint", "roadmap"
+    ]
+    
+    # Complex query indicators
+    complexity_indicators = {
+        "multi-step": ["step", "phase", "stage", "part", "section"],
+        "detail-oriented": ["detail", "specific", "precisely", "exactly", "thoroughly"],
+        "comparative": ["compare", "contrast", "versus", "vs", "difference", "similarity"],
+        "process-focused": ["process", "procedure", "workflow", "pipeline", "sequence"],
+        "analytical": ["analyze", "examine", "investigate", "assess", "evaluate"]
+    }
+    
+    # Calculate a complexity score
+    complexity_score = 0.0
+    
+    # Check for explicit sequential thinking indicators (highest weight)
+    for indicator in explicit_indicators:
+        if indicator in prompt_lower:
+            # Strong signal, high weight
+            complexity_score += 2.0
+            reasoning = f"Contains explicit sequential indicator: '{indicator}'"
+            return True, complexity_score, reasoning
+    
+    # Check for topic-specific indicators
+    topic_matches = []
+    for indicator in topic_indicators:
+        if indicator in prompt_lower:
+            topic_matches.append(indicator)
+            complexity_score += 0.5  # Medium weight
+    
+    if len(topic_matches) >= 2:  # At least two topic indicators
+        reasoning = f"Contains multiple sequential topic indicators: {', '.join(topic_matches[:3])}"
+        return True, complexity_score, reasoning
+            
+    # Check for complexity indicators
+    complexity_matches = []
+    for category, indicators in complexity_indicators.items():
+        for indicator in indicators:
+            if indicator in prompt_lower:
+                complexity_matches.append(f"{category}:{indicator}")
+                complexity_score += 0.3  # Lower weight
+    
+    # Additional heuristics
+    
+    # Long prompts tend to be complex queries
+    word_count = len(prompt.split())
+    if word_count > 20:  # Long query
+        complexity_score += 0.1 * min(5, (word_count - 20) / 10)  # Cap at +0.5
+    
+    # Questions with multiple parts or sub-questions
+    question_count = prompt.count("?")
+    if question_count > 1:  # Multiple questions
+        complexity_score += 0.2 * min(5, question_count)  # Cap at +1.0
+    
+    # Common structural indicators for complex queries
+    structural_patterns = [
+        r"(\d+)[.)]", # Numbered lists
+        r"(first|second|third|finally)[\s:,]", # Ordered steps 
+        r"(before|after|then|next|subsequently)[\s,]" # Sequential terms
+    ]
+    
+    for pattern in structural_patterns:
+        matches = re.findall(pattern, prompt_lower)
+        if matches:
+            complexity_score += 0.3
+            complexity_matches.append(f"structure:{matches[0]}")
+            
+    # Decision threshold: if score is high enough, use sequential thinking
+    threshold = 1.0
+    use_sequential = complexity_score >= threshold
+    
+    if complexity_matches:
+        reasoning = f"Complexity indicators: {', '.join(complexity_matches[:3])}"
+    elif topic_matches:
+        reasoning = f"Topic indicators: {', '.join(topic_matches[:3])}"
+    else:
+        reasoning = f"General complexity score: {complexity_score:.2f}"
+        
+    return use_sequential, complexity_score, reasoning

@@ -25,7 +25,7 @@ async def get_all_cogs():
     """
     Returns all cog classes from command cog modules
     """
-    # These are the new cogs we added
+    # These are the cogs we want to load
     cog_modules = [
         "AgentCog", 
         "KnowledgeBaseCog",
@@ -33,7 +33,12 @@ async def get_all_cogs():
         "StatsCog", 
         "ReflectiveRAGCog",
         "MCPAgentCog",
-        # List other cogs here
+        "ChatConfigCog",
+        "NekoCog",
+        "HelpCog",
+        "VoiceCog",
+        "SentimentCog",
+        # AiStuffCog is excluded because ImageCog replaces its functionality
     ]
     
     # In the future, this can be auto-detected

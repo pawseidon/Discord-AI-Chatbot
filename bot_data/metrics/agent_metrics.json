@@ -1,1 +1,51 @@
-[]
+[
+  {
+    "timestamp": "2025-05-13T04:37:39.350076",
+    "command": "sequential_thinking_command",
+    "user_id": "818806194608013313",
+    "server_id": "1207150454526578729",
+    "execution_time_seconds": 0,
+    "success": false,
+    "error": "unhandled errors in a TaskGroup (2 sub-exceptions)"
+  },
+  {
+    "timestamp": "2025-05-13T07:17:13.122861",
+    "command": "sequential_thinking_text",
+    "user_id": "818806194608013313",
+    "server_id": "1027379181534842900",
+    "execution_time_seconds": 0,
+    "success": true
+  },
+  {
+    "timestamp": "2025-05-13T07:20:10.920932",
+    "command": "sequential_thinking_text",
+    "user_id": "818806194608013313",
+    "server_id": "1027379181534842900",
+    "execution_time_seconds": 0,
+    "success": true
+  },
+  {
+    "timestamp": "2025-05-13T07:24:20.996225",
+    "command": "sequential_thinking_text",
+    "user_id": "818806194608013313",
+    "server_id": "1027379181534842900",
+    "execution_time_seconds": 0,
+    "success": true
+  },
+  {
+    "timestamp": "2025-05-13T07:30:18.562231",
+    "command": "sequential_thinking_text",
+    "user_id": "818806194608013313",
+    "server_id": "1027379181534842900",
+    "execution_time_seconds": 0,
+    "success": true
+  },
+  {
+    "timestamp": "2025-05-13T07:32:13.248915",
+    "command": "sequential_thinking_text",
+    "user_id": "818806194608013313",
+    "server_id": "1027379181534842900",
+    "execution_time_seconds": 0,
+    "success": true
+  }
+]

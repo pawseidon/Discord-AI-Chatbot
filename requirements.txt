@@ -28,6 +28,7 @@ sentence-transformers>=2.2.2
 langchain-mcp>=0.1.3
 langchain-mcp-adapters>=0.0.3
 mcp>=0.0.12
+exceptiongroup>=1.1.1; python_version < '3.11'
 
 # Token counting
 tiktoken>=0.6.0

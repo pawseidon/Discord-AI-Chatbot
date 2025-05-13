@@ -5,10 +5,13 @@ import aiohttp
 import asyncio
 import random
 import time
+import tempfile
 from typing import List, Optional, Dict, Any, Union, Tuple
 import discord
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
+from PIL import Image
+from bot_utilities.config_loader import config
 
 class ImageProcessor:
     """Module for processing and analyzing images"""
@@ -23,15 +26,53 @@ class ImageProcessor:
         )
     
     async def download_image(self, image_url: str) -> Optional[bytes]:
-        """Download image from URL"""
+        """Download image from URL with special handling for Discord's image proxying behavior"""
         try:
+            # Use robust headers to handle Discord proxying/caching issues
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36',
+                'Accept': 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': 'https://discord.com/',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+            }
+            
+            # Add timestamp parameter to bypass caching
+            if '?' not in image_url:
+                image_url += f'?t={int(time.time())}'
+            else:
+                image_url += f'&t={int(time.time())}'
+            
+            # Detect if URL is from Discord CDN and prepare for proper handling
+            is_discord_cdn = 'cdn.discordapp.com' in image_url or 'media.discordapp.net' in image_url
+            
             async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as response:
+                # First request with extended timeout for Discord CDN
+                timeout = aiohttp.ClientTimeout(total=15 if is_discord_cdn else 10)
+                async with session.get(image_url, headers=headers, timeout=timeout) as response:
                     if response.status == 200:
                         return await response.read()
-                    else:
-                        print(f"Failed to download image: {response.status}")
-                        return None
+                    
+                    # If initial request fails and it's a Discord URL, try alternate approach
+                    if is_discord_cdn and response.status != 200:
+                        print(f"First Discord CDN request failed with status {response.status}, trying alternate approach")
+                        
+                        # Short delay to avoid rate limiting
+                        await asyncio.sleep(1)
+                        
+                        # Try again with different headers
+                        alt_headers = headers.copy()
+                        alt_headers['User-Agent'] = 'Discord-AI-Chatbot/1.0'
+                        async with session.get(image_url, headers=alt_headers, timeout=timeout) as alt_response:
+                            if alt_response.status == 200:
+                                return await alt_response.read()
+                    
+                    print(f"Failed to download image: {response.status}")
+                    return None
+        except asyncio.TimeoutError:
+            print(f"Timeout error downloading image: {image_url}")
+            return None
         except Exception as e:
             print(f"Error downloading image: {e}")
             return None
@@ -40,33 +81,63 @@ class ImageProcessor:
         """Encode image data to base64 string"""
         return base64.b64encode(image_data).decode('utf-8')
     
-    async def analyze_image(self, image_data: bytes, prompt: str = "Describe this image in detail.") -> str:
-        """Analyze an image using a multimodal LLM"""
-        # We'll implement multimodal analysis specific to different models
+    async def analyze_image(self, image_url: str) -> str:
+        """
+        Analyze an image and return a description.
+        
+        Args:
+            image_url (str): URL of the image to analyze
+            
+        Returns:
+            str: Description of the image
+        """
         try:
-            # Encode image to base64
-            base64_image = self.encode_image_to_base64(image_data)
+            # This is a simplified version - in production you would use an AI vision model
+            # For example OpenAI's GPT-4 Vision or another vision model
             
-            # Create a message with the image as base64
-            message = HumanMessage(
-                content=[
-                    {"type": "text", "text": prompt},
+            # Get API info from config
+            api_key = os.getenv("OPENAI_API_KEY") or config.get("OPENAI_API_KEY", "")
+            
+            if not api_key:
+                return "Error: OpenAI API key not configured. Please set OPENAI_API_KEY in .env or config.yml."
+            
+            # Create the API request
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
+            }
+            
+            # Prepare the request with the image URL
+            payload = {
+                "model": "gpt-4-vision-preview",
+                "messages": [
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Describe this image in detail. Include all significant visible elements."},
+                            {"type": "image_url", "image_url": {"url": image_url}}
+                        ]
                     }
-                ]
-            )
+                ],
+                "max_tokens": 300
+            }
             
-            # Get response from the model
-            response = await self.llm.ainvoke([message])
-            
-            return response.content
+            # Make the API call
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=payload
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        return result["choices"][0]["message"]["content"]
+                    else:
+                        error_text = await response.text()
+                        return f"Error processing image: {response.status} - {error_text[:100]}..."
+                        
         except Exception as e:
-            print(f"Error analyzing image: {e}")
-            return f"I couldn't analyze this image: {str(e)}"
+            return f"Error analyzing image: {str(e)}"
     
     async def process_discord_attachment(self, attachment: discord.Attachment, prompt: str = "Describe this image in detail.") -> str:
         """Process a Discord attachment"""
@@ -81,14 +152,153 @@ class ImageProcessor:
             return "I couldn't download this image."
         
         # Analyze the image
-        return await self.analyze_image(image_data, prompt)
+        return await self.analyze_image(attachment.url)
     
-    async def extract_text_from_image(self, image_data: bytes) -> str:
-        """Extract text from an image (OCR)"""
-        # For OCR, we use a specific prompt
-        ocr_prompt = "Extract all text visible in this image. Only return the text you see, nothing else."
+    async def extract_text_from_image(self, image_url: str) -> str:
+        """
+        Extract text from an image (OCR).
         
-        return await self.analyze_image(image_data, ocr_prompt)
+        Args:
+            image_url (str): URL of the image to extract text from
+            
+        Returns:
+            str: Extracted text
+        """
+        try:
+            # This is a simplified version - in production you would use an OCR model
+            # For example OpenAI's GPT-4 Vision or another OCR service
+            
+            # Get API info from config
+            api_key = os.getenv("OPENAI_API_KEY") or config.get("OPENAI_API_KEY", "")
+            
+            if not api_key:
+                return "Error: OpenAI API key not configured. Please set OPENAI_API_KEY in .env or config.yml."
+            
+            # Create the API request
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
+            }
+            
+            # Prepare the request with the image URL
+            payload = {
+                "model": "gpt-4-vision-preview",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Extract all text from this image, preserving the formatting as much as possible. Only extract the text, don't describe the image."},
+                            {"type": "image_url", "image_url": {"url": image_url}}
+                        ]
+                    }
+                ],
+                "max_tokens": 500
+            }
+            
+            # Make the API call
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=payload
+                ) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        return result["choices"][0]["message"]["content"]
+                    else:
+                        error_text = await response.text()
+                        return f"Error extracting text: {response.status} - {error_text[:100]}..."
+        
+        except Exception as e:
+            return f"Error performing OCR: {str(e)}"
+    
+    async def transcribe_audio(self, audio_url: str) -> str:
+        """
+        Transcribe speech from an audio file to text.
+        
+        Args:
+            audio_url (str): URL of the audio file to transcribe
+            
+        Returns:
+            str: Transcribed text
+        """
+        try:
+            # Get API info from config
+            api_key = os.getenv("OPENAI_API_KEY") or config.get("OPENAI_API_KEY", "")
+            
+            if not api_key:
+                return "Error: OpenAI API key not configured. Please set OPENAI_API_KEY in .env or config.yml."
+            
+            # Download the audio file
+            async with aiohttp.ClientSession() as session:
+                async with session.get(audio_url) as response:
+                    if response.status != 200:
+                        return f"Error downloading audio: HTTP {response.status}"
+                    
+                    # Create a temporary file to store the audio
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
+                        temp_file.write(await response.read())
+                        temp_file_path = temp_file.name
+            
+            # Prepare API request headers
+            headers = {
+                "Authorization": f"Bearer {api_key}"
+            }
+            
+            # Create form data with the audio file
+            with open(temp_file_path, "rb") as audio_file:
+                form_data = aiohttp.FormData()
+                form_data.add_field(
+                    name="file",
+                    value=audio_file,
+                    filename="audio.mp3",
+                    content_type="audio/mpeg"
+                )
+                form_data.add_field("model", "whisper-1")
+                form_data.add_field("response_format", "text")
+                
+                # Make the API call to Whisper
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "https://api.openai.com/v1/audio/transcriptions",
+                        headers=headers,
+                        data=form_data
+                    ) as response:
+                        if response.status == 200:
+                            # Simple text response
+                            transcript = await response.text()
+                            return transcript
+                        else:
+                            error_text = await response.text()
+                            return f"Error transcribing audio: {response.status} - {error_text[:100]}..."
+            
+        except Exception as e:
+            return f"Error transcribing audio: {str(e)}"
+        finally:
+            # Clean up the temporary file
+            if 'temp_file_path' in locals():
+                try:
+                    os.unlink(temp_file_path)
+                except Exception:
+                    pass
+
+    async def process_image(self, url: str, operation: str = "analyze") -> str:
+        """
+        Process an image with the specified operation.
+        
+        Args:
+            url (str): URL of the image to process
+            operation (str): Operation to perform (analyze, ocr)
+            
+        Returns:
+            str: Result of the processing
+        """
+        if operation == "analyze":
+            return await self.analyze_image(url)
+        elif operation == "ocr":
+            return await self.extract_text_from_image(url)
+        else:
+            return f"Unknown operation: {operation}"
 
 class ImageGenerator:
     """Enhanced module for generating images with multiple providers"""

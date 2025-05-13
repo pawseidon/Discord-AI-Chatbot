@@ -5,7 +5,6 @@ from bot_utilities.config_loader import load_current_language, load_instructions
 instructions = load_instructions()
 allow_dm = config['ALLOW_DM']
 active_channels = set()
-trigger_words = config['TRIGGER']
 smart_mention = config['SMART_MENTION']
 presences = config["PRESENCES"]
 presences_disabled = config["DISABLE_PRESENCE"]

@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import numpy as np
 import io
+import discord
 
 class AgentMonitor:
     """Monitors and tracks agent performance and usage metrics"""
@@ -354,3 +355,78 @@ class PerformanceDecorator:
                 ))
         
         return wrapper 
+
+class UserActivityMonitor:
+    """Monitors user command usage and activity"""
+    
+    def __init__(self, storage_dir='bot_data/user_activity'):
+        """Initialize the user activity monitor"""
+        self.storage_dir = storage_dir
+        self.activity_file = f"{storage_dir}/command_activity.json"
+        
+        # Ensure the storage directory exists
+        os.makedirs(storage_dir, exist_ok=True)
+        
+        # Initialize activity file if it doesn't exist
+        if not os.path.exists(self.activity_file):
+            with open(self.activity_file, 'w') as f:
+                json.dump({}, f)
+    
+    async def log_command_usage(self, user_id: str, command_name: str, guild_id: str, success: bool = True):
+        """Log command usage by a user"""
+        try:
+            # Read current activity data
+            async with aiofiles.open(self.activity_file, 'r') as f:
+                content = await f.read()
+                activity_data = json.loads(content) if content else {}
+            
+            # Initialize user if they don't exist
+            if user_id not in activity_data:
+                activity_data[user_id] = {
+                    "commands": {},
+                    "guilds": {},
+                    "total_commands": 0,
+                    "successful_commands": 0,
+                    "first_interaction": datetime.datetime.now().isoformat(),
+                    "latest_interaction": None
+                }
+            
+            user_data = activity_data[user_id]
+            
+            # Update command stats
+            if command_name not in user_data["commands"]:
+                user_data["commands"][command_name] = 0
+            user_data["commands"][command_name] += 1
+            
+            # Update guild stats
+            if guild_id not in user_data["guilds"]:
+                user_data["guilds"][guild_id] = 0
+            user_data["guilds"][guild_id] += 1
+            
+            # Update overall stats
+            user_data["total_commands"] += 1
+            if success:
+                user_data["successful_commands"] += 1
+            user_data["latest_interaction"] = datetime.datetime.now().isoformat()
+            
+            # Save updated activity data
+            async with aiofiles.open(self.activity_file, 'w') as f:
+                await f.write(json.dumps(activity_data, indent=2))
+                
+        except Exception as e:
+            print(f"Error logging command usage: {e}")
+    
+    async def get_user_activity(self, user_id: str = None) -> Dict[str, Any]:
+        """Get activity data for a specific user or all users"""
+        try:
+            async with aiofiles.open(self.activity_file, 'r') as f:
+                content = await f.read()
+                activity_data = json.loads(content) if content else {}
+            
+            if user_id:
+                return activity_data.get(user_id, {})
+            else:
+                return activity_data
+        except Exception as e:
+            print(f"Error retrieving user activity: {e}")
+            return {} 
