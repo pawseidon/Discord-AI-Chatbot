@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from bot_utilities.sequential_thinking import create_sequential_thinking
+from bot_utilities.services.sequential_thinking_service import sequential_thinking_service
 import json
 import sys
 
@@ -22,14 +22,18 @@ Thought 4: I should double-check my work. 5 + 7 = 12, and 12 + 3 = 15. This is c
 Answer: The sum of 5+7+3 is 15.
 """
 
+    async def generate_text(self, system_prompt=None, user_prompt=None, temperature=0.0):
+        print(f"Mock LLM received prompt: {user_prompt[:100]}...")
+        return self.response
+
     async def async_call(self, prompt, temperature=0.0, max_tokens=1000):
         print(f"Mock LLM received prompt: {prompt[:100]}...")
         return self.response
 
 # Complex mock LLM for testing sequential thinking on complex problems
 class ComplexMockLLM:
-    async def async_call(self, prompt, temperature=0.0, max_tokens=1000):
-        print(f"Complex Mock LLM received prompt: {prompt[:100]}...")
+    async def generate_text(self, system_prompt=None, user_prompt=None, temperature=0.0):
+        print(f"Complex Mock LLM received prompt: {user_prompt[:100]}...")
         
         # Return a more complex response that demonstrates sequential thinking
         return """
@@ -74,19 +78,30 @@ Answer: The most effective networking plan for connecting the three buildings wo
 
 This provides maximum redundancy for the current 3-building setup while allowing for controlled growth.
 """
+    
+    async def async_call(self, prompt, temperature=0.0, max_tokens=1000):
+        print(f"Complex Mock LLM received prompt: {prompt[:100]}...")
+        
+        # Return a more complex response that demonstrates sequential thinking
+        return self.generate_text(None, prompt, temperature)
 
 class MockAIProvider:
     """Mock AI provider for testing"""
     def __init__(self, response_map=None):
         self.response_map = response_map or {}
         
-    async def async_call(self, prompt, temperature=0.7, max_tokens=2000):
+    async def generate_text(self, system_prompt=None, user_prompt=None, temperature=0.7):
         # Simplified matching - just look for keywords in the prompt
+        if user_prompt:
         for keyword, response in self.response_map.items():
-            if keyword in prompt:
+                if keyword in user_prompt:
                 return response
         # Default mock response
         return "This is a test response from the mock AI provider."
+        
+    async def async_call(self, prompt, temperature=0.7, max_tokens=2000):
+        # For backward compatibility
+        return await self.generate_text(None, prompt, temperature)
 
 async def test_sequential_thinking():
     """Test sequential thinking with a mock LLM provider"""
@@ -148,12 +163,13 @@ Conclusion: By exploring multiple connected thought paths, I've arrived at a com
     
     mock_provider = MockAIProvider(response_map=mock_responses)
     
-    # Create sequential thinking with the mock provider
-    seq_thinking = create_sequential_thinking(llm_provider=mock_provider)
+    # Initialize the sequential thinking service with the mock provider
+    sequential_thinking_service.llm_provider = mock_provider
+    sequential_thinking_service._initialized = True
     
     # Test standard sequential thinking
     print("\n\nTesting Sequential Thinking:")
-    success, response = await seq_thinking.run(
+    success, response = await sequential_thinking_service.process_sequential_thinking(
         problem="Test problem for sequential thinking",
         prompt_style="sequential"
     )
@@ -162,7 +178,7 @@ Conclusion: By exploring multiple connected thought paths, I've arrived at a com
     
     # Test Chain of Verification
     print("\n\nTesting Chain-of-Verification:")
-    success, response = await seq_thinking.run(
+    success, response = await sequential_thinking_service.process_sequential_thinking(
         problem="Test problem for chain-of-verification",
         prompt_style="cov"
     )
@@ -171,7 +187,7 @@ Conclusion: By exploring multiple connected thought paths, I've arrived at a com
     
     # Test Graph of Thought
     print("\n\nTesting Graph-of-Thought:")
-    success, response = await seq_thinking.run(
+    success, response = await sequential_thinking_service.process_sequential_thinking(
         problem="Test problem that requires exploring multiple perspectives and their relationships",
         prompt_style="got"
     )

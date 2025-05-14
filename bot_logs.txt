@@ -1,0 +1,33 @@
+2025-05-14 19:56:46,754 - memory_service - INFO - Found memory directory at bot_data/memory
+2025-05-14 19:56:46,754 - memory_service - INFO - Found 0 user preference files
+2025-05-14 19:56:46,754 - memory_service - INFO - Memory service loaded successfully
+2025-05-14 19:56:46,754 - memory_service - INFO - Found 0 user preference files
+2025-05-14 19:56:46,754 - memory_service - INFO - Memory service loaded successfully
+2025-05-14 19:56:47,249 - discord_bot - INFO - Starting bot...
+[2025-05-14 19:56:47] [INFO    ] discord.client: logging in using static token
+2025-05-14 19:56:47,250 - discord.client - INFO - logging in using static token
+2025-05-14 19:56:47,943 - discord_bot - INFO - Starting bot initialization...
+2025-05-14 19:56:47,943 - discord_bot - INFO - Initializing AI services...
+2025-05-14 19:56:47,977 - agent_tools_manager - INFO - Registered tool: search
+2025-05-14 19:56:47,978 - agent_tools_manager - INFO - Registered tool: calculator
+2025-05-14 19:56:47,978 - agent_tools_manager - INFO - Registered tool: memory
+2025-05-14 19:56:47,980 - agent_orchestrator - INFO - Using default agent configurations
+2025-05-14 19:56:47,981 - agent_service - INFO - Agent service initialized successfully
+2025-05-14 19:56:47,981 - symbolic_reasoning_service - INFO - Symbolic reasoning service initialized successfully
+2025-05-14 19:56:47,981 - memory_service - INFO - Found 0 user preference files
+2025-05-14 19:56:47,981 - memory_service - INFO - Memory data loaded from disk successfully
+2025-05-14 19:56:47,981 - discord_bot - INFO - AI services initialized successfully
+2025-05-14 19:56:47,981 - discord_bot - INFO - Loaded Event Handler on_command_error
+2025-05-14 19:56:47,982 - discord_bot - INFO - Loaded Event Handler on_message
+2025-05-14 19:56:47,983 - discord_bot - INFO - Loaded Event Handler on_ready
+2025-05-14 19:56:47,983 - discord_bot - INFO - Loaded Command HelpCog
+2025-05-14 19:56:47,984 - discord_bot - INFO - Loaded Command ReasoningCog
+2025-05-14 19:56:47,988 - discord_bot - INFO - Loaded Command ChatConfigCog
+2025-05-14 19:56:47,989 - discord_bot - INFO - Loaded Command EmojiReactionCog
+2025-05-14 19:56:47,989 - discord_bot - INFO - Syncing commands...
+2025-05-14 19:57:24,172 - discord_bot - INFO - Loaded 8 commands
+2025-05-14 19:57:24,172 - discord_bot - INFO - Bot initialization complete
+[2025-05-14 19:57:24] [INFO    ] discord.gateway: Shard ID 0 has connected to Gateway (Session ID: 2d8973e154a36f6b31d1e425cd1d159b).
+2025-05-14 19:57:24,784 - discord.gateway - INFO - Shard ID 0 has connected to Gateway (Session ID: 2d8973e154a36f6b31d1e425cd1d159b).
+2025-05-14 19:57:26,795 - discord_bot - INFO - Logged in as Hand (1297354957078528022)
+2025-05-14 19:57:26,795 - discord_bot - INFO - Connected to 2 guilds

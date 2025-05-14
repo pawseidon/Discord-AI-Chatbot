@@ -1,17 +1,61 @@
+"""
+EmojiReactionCog - Handles emoji reactions for different reasoning types
+"""
+
 import discord
 from discord.ext import commands
+import logging
 import asyncio
 from typing import Dict, List, Set, Any, Optional
 
 from bot_utilities.services.agent_service import agent_service
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('emoji_reaction_cog')
+
 class EmojiReactionCog(commands.Cog):
-    """A cog to handle emoji reactions for different reasoning types"""
+    """Cog for handling emoji reactions to bot messages"""
     
     def __init__(self, bot):
         self.bot = bot
+        self.message_reactions = {}  # Maps message IDs to added reaction types
         self.message_reasoning_types = {}  # Maps message IDs to sets of reasoning types
-        self.processing_messages = {}  # Maps message IDs to processing status and timestamps
+        self.messages_processed = set()  # Track messages that have already been processed
+        self.reaction_queue = asyncio.Queue()  # Queue for rate-limited reaction adding
+        self.bot.loop.create_task(self.process_reaction_queue())
+    
+    async def process_reaction_queue(self):
+        """Process reaction queue to avoid rate limits"""
+        while True:
+            try:
+                # Get next reaction task from queue
+                message, emoji, operation = await self.reaction_queue.get()
+                
+                try:
+                    if operation == "add":
+                        await message.add_reaction(emoji)
+                    elif operation == "remove":
+                        await message.remove_reaction(emoji, self.bot.user)
+                except discord.errors.HTTPException as e:
+                    if e.status == 429:  # Rate limited
+                        logger.warning(f"Rate limited when {operation}ing reaction {emoji}, waiting longer")
+                        # Put back in queue with longer delay
+                        await asyncio.sleep(2.0)
+                        await self.reaction_queue.put((message, emoji, operation))
+                    else:
+                        logger.warning(f"Failed to {operation} reaction {emoji}: {str(e)}")
+                except Exception as e:
+                    logger.warning(f"Unexpected error {operation}ing reaction {emoji}: {str(e)}")
+                
+                # Mark task as done
+                self.reaction_queue.task_done()
+                
+                # Wait between operations to avoid rate limits
+                await asyncio.sleep(1.0)
+            except Exception as e:
+                logger.error(f"Error in reaction queue processor: {str(e)}")
+                await asyncio.sleep(5.0)  # Wait longer on error
     
     async def get_reasoning_emoji(self, reasoning_type: str) -> str:
         """Get the emoji for a specific reasoning type"""
@@ -21,24 +65,31 @@ class EmojiReactionCog(commands.Cog):
         """Add emoji reactions based on reasoning types used"""
         if not message:
             return
+        
+        # Check if we've already processed this message
+        if message.id in self.messages_processed:
+            return
+            
+        # Mark this message as processed
+        self.messages_processed.add(message.id)
             
         # Store the reasoning types for this message
         self.message_reasoning_types[message.id] = set(reasoning_types)
         
-        # Add reactions for each reasoning type
+        # Add reactions for each reasoning type with rate limit handling
         for reasoning_type in reasoning_types:
             emoji = await self.get_reasoning_emoji(reasoning_type)
-            try:
-                await message.add_reaction(emoji)
-                # Small delay to avoid rate limits
-                await asyncio.sleep(0.5)
-            except discord.errors.HTTPException:
-                # This can happen if emoji is invalid or permissions are missing
-                pass
+            
+            # Queue the reaction add operation
+            await self.reaction_queue.put((message, emoji, "add"))
     
     async def update_reasoning_reactions(self, message: discord.Message, new_reasoning_types: List[str]) -> None:
         """Update emoji reactions when reasoning types change"""
-        if not message or message.id not in self.message_reasoning_types:
+        if not message:
+            return
+            
+        # If message not previously processed, just add reactions
+        if message.id not in self.message_reasoning_types:
             return await self.add_reasoning_reactions(message, new_reasoning_types)
             
         current_types = self.message_reasoning_types[message.id]
@@ -48,21 +99,15 @@ class EmojiReactionCog(commands.Cog):
         types_to_remove = current_types - new_types_set
         for reasoning_type in types_to_remove:
             emoji = await self.get_reasoning_emoji(reasoning_type)
-            try:
-                await message.remove_reaction(emoji, self.bot.user)
-                await asyncio.sleep(0.5)
-            except discord.errors.HTTPException:
-                pass
+            # Queue the reaction remove operation
+            await self.reaction_queue.put((message, emoji, "remove"))
         
         # Add reactions for new reasoning types
         types_to_add = new_types_set - current_types
         for reasoning_type in types_to_add:
             emoji = await self.get_reasoning_emoji(reasoning_type)
-            try:
-                await message.add_reaction(emoji)
-                await asyncio.sleep(0.5)
-            except discord.errors.HTTPException:
-                pass
+            # Queue the reaction add operation
+            await self.reaction_queue.put((message, emoji, "add"))
         
         # Update stored reasoning types
         self.message_reasoning_types[message.id] = new_types_set
@@ -70,16 +115,16 @@ class EmojiReactionCog(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Listen for bot messages to add reactions"""
-        # Skip messages not from the bot
-        if message.author.id != self.bot.user.id:
+        # Skip non-bot messages or messages from other bots
+        if not message.author.bot or message.author.id != self.bot.user.id:
             return
             
-        # Skip system messages
-        if not message.content:
+        # Skip system messages or ephemeral messages
+        if not message.content or not message.guild:
             return
             
-        # Skip messages that are ephemeral or in DMs
-        if not message.guild:
+        # Check if we've already processed this message
+        if message.id in self.messages_processed:
             return
             
         # Try to detect reasoning types from the message content
@@ -146,90 +191,6 @@ class EmojiReactionCog(commands.Cog):
             reasoning_types.append("conversational")
             
         return reasoning_types
-        
-    @commands.hybrid_command(name="toggleactive", description="Toggle the bot active/inactive in the current channel")
-    @commands.has_permissions(administrator=True)
-    async def toggleactive_command(self, ctx):
-        """Toggle the bot active/inactive in the current channel"""
-        # Get the ChatConfigCog to handle the command
-        chat_config_cog = self.bot.get_cog('ChatConfigCog')
-        if chat_config_cog:
-            # Invoke the actual implementation
-            await chat_config_cog.toggle_channel(ctx)
-        else:
-            await ctx.reply("❌ The channel configuration system isn't loaded.")
-        
-    @commands.hybrid_command(name="toggleinactive", description="Toggle the bot inactive/active in the current channel")
-    @commands.has_permissions(administrator=True)
-    async def toggleinactive_command(self, ctx):
-        """Toggle the bot inactive/active in the current channel - alias for toggleactive"""
-        await self.toggleactive_command(ctx)
-        
-    @commands.hybrid_command(name="help", description="Display help information about the bot")
-    async def help_command(self, ctx):
-        """Display help information about the bot"""
-        # Get the HelpCog to handle the command
-        help_cog = self.bot.get_cog('HelpCog')
-        if help_cog:
-            # Invoke the actual implementation
-            await help_cog.help_command(ctx)
-        else:
-            # Fallback help if HelpCog is not available
-            embed = discord.Embed(
-                title="Discord AI Chatbot Help",
-                description="I'm a versatile AI chatbot with multi-agent reasoning capabilities.",
-                color=discord.Color.blue()
-            )
-            
-            embed.add_field(
-                name="👋 Getting Started",
-                value="Mention me or reply to my messages to chat with me.",
-                inline=False
-            )
-            
-            embed.add_field(
-                name="📚 Commands",
-                value="`/help` - Show this help message\n"
-                      "`/clear` - Clear your conversation history\n"
-                      "`/reset` - Reset current conversation\n"
-                      "`/toggleactive` - Toggle the bot in a channel (admin)",
-                inline=False
-            )
-            
-            embed.add_field(
-                name="🧠 Reasoning Types",
-                value="I use different reasoning modes based on your query:\n"
-                      "- 💬 Conversational: Natural chat\n"
-                      "- 📚 RAG: Research and information retrieval\n"
-                      "- 🔄 Sequential: Step-by-step analysis\n"
-                      "- ✅ Verification: Fact-checking\n"
-                      "- And many more!",
-                inline=False
-            )
-            
-            await ctx.reply(embed=embed)
-        
-    @commands.hybrid_command(name="clear", description="Clear your conversation history and data")
-    async def clear_command(self, ctx):
-        """Clear your conversation history and data"""
-        # Get the ReasoningCog to handle the command
-        reasoning_cog = self.bot.get_cog('ReasoningCog')
-        if reasoning_cog:
-            # Invoke the actual implementation
-            await reasoning_cog.clear_data_command(ctx)
-        else:
-            await ctx.reply("❌ Sorry, I couldn't clear your data at this time.")
-        
-    @commands.hybrid_command(name="reset", description="Reset the current conversation but keep your preferences")
-    async def reset_command(self, ctx):
-        """Reset the current conversation but keep your preferences"""
-        # Get the ReasoningCog to handle the command
-        reasoning_cog = self.bot.get_cog('ReasoningCog')
-        if reasoning_cog:
-            # Invoke the actual implementation
-            await reasoning_cog.reset_conversation_command(ctx)
-        else:
-            await ctx.reply("❌ Sorry, I couldn't reset the conversation at this time.")
 
 async def setup(bot):
     await bot.add_cog(EmojiReactionCog(bot)) 

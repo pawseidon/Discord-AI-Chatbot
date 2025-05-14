@@ -314,7 +314,7 @@ class MessageService:
     @staticmethod
     async def split_message(content: str, max_length: int = 2000) -> List[str]:
         """
-        Split a long message into chunks that fit within Discord's message limit
+        Split a long message into chunks while preserving formatting
         
         Args:
             content: The message content to split
@@ -323,45 +323,80 @@ class MessageService:
         Returns:
             List of message chunks
         """
-        # Check if content is already within limits
         if len(content) <= max_length:
             return [content]
             
         chunks = []
         current_chunk = ""
         
-        # Split by lines first to maintain formatting
+        # Track code block and formatting states
+        in_code_block = False
+        code_block_lang = ""
+        code_block_content = ""
+        
         lines = content.split('\n')
         
         for line in lines:
-            # If the line itself is too long, split it
-            if len(line) > max_length:
-                # If current chunk is not empty, add it to chunks
-                if current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = ""
-                
-                # Split the long line
-                line_parts = [line[i:i + max_length] for i in range(0, len(line), max_length)]
-                chunks.extend(line_parts[:-1])  # Add all but the last part
-                current_chunk = line_parts[-1]  # Start a new chunk with the last part
-            
-            # If adding this line would make the chunk too long
-            elif len(current_chunk) + len(line) + 1 > max_length:
-                chunks.append(current_chunk)
-                current_chunk = line
-            
-            # Otherwise, add the line to the current chunk
+            # Check for code block delimiters
+            if line.startswith('```'):
+                if in_code_block:
+                    # End of code block
+                    in_code_block = False
+                    # Add closing backticks
+                    if len(current_chunk) + len(line) <= max_length:
+                        current_chunk += line + '\n'
+                    else:
+                        # If chunk would exceed max length, start a new chunk
+                        # but make sure to close the code block in the current chunk
+                        # and open it in the new chunk
+                        chunks.append(current_chunk + "```\n")
+                        current_chunk = f"```{code_block_lang}\n{line[3:]}\n"
+                else:
+                    # Start of code block
+                    in_code_block = True
+                    # Extract language if specified
+                    if len(line) > 3:
+                        code_block_lang = line[3:].strip()
+                    else:
+                        code_block_lang = ""
+                    
+                    # Check if adding this line would exceed the max length
+                    if len(current_chunk) + len(line) <= max_length:
+                        current_chunk += line + '\n'
+                    else:
+                        chunks.append(current_chunk)
+                        current_chunk = line + '\n'
             else:
-                if current_chunk:
-                    current_chunk += '\n'
-                current_chunk += line
+                # Regular line, check if it fits in the current chunk
+                if len(current_chunk) + len(line) + 1 <= max_length:  # +1 for newline
+                    current_chunk += line + '\n'
+                else:
+                    # Line won't fit, check if we're in a code block
+                    if in_code_block:
+                        # Need to close code block in current chunk and open in next
+                        chunks.append(current_chunk + "```\n")
+                        current_chunk = f"```{code_block_lang}\n{line}\n"
+                    else:
+                        # Normal text, just create a new chunk
+                        chunks.append(current_chunk)
+                        current_chunk = line + '\n'
         
-        # Add the last chunk if it's not empty
+        # Add the last chunk if not empty
         if current_chunk:
             chunks.append(current_chunk)
             
-        return chunks
+        # Final pass to ensure no chunk exceeds the max length
+        final_chunks = []
+        for chunk in chunks:
+            if len(chunk) <= max_length:
+                final_chunks.append(chunk)
+            else:
+                # Chunk is still too long, split at max_length
+                # This is a safety fallback and should rarely happen
+                for i in range(0, len(chunk), max_length):
+                    final_chunks.append(chunk[i:i+max_length])
+        
+        return final_chunks
     
     @staticmethod
     async def format_with_agent_emoji(response: str, agent_type: str) -> Tuple[str, Optional[str]]:

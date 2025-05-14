@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import traceback
 import asyncio
+import re
 from typing import Dict, Any, Optional, List, Tuple
 import time
 
@@ -24,7 +25,7 @@ class ReasoningCog(commands.Cog):
         self.monitor = AgentMonitor()
         self.active_conversations = {}
         self.last_reasoning_type = {}
-        
+    
         # Track last activity time for cache cleanup
         self.conversation_last_activity = {}
         
@@ -192,8 +193,8 @@ class ReasoningCog(commands.Cog):
                 
                 for rtype in reasoning_types:
                     if rtype.lower() in content.lower():
-                        reasoning_type = rtype
-                        break
+                            reasoning_type = rtype
+                            break
                 
                 if reasoning_type:
                     # Save the preference
@@ -334,7 +335,7 @@ class ReasoningCog(commands.Cog):
                 await self._process_with_standard_mode(message, content, initial_message, reasoning_type, user_id, conversation_id)
             
             return True
-            
+    
         except Exception as e:
             error_traceback = traceback.format_exc()
             print(f"Error in process_thinking_request: {error_traceback}")
@@ -399,41 +400,6 @@ class ReasoningCog(commands.Cog):
         
         # Check if any pattern matches
         return any(re.match(pattern, query.lower()) for pattern in follow_up_patterns)
-    
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        """Listen for messages to process with reasoning"""
-        # Skip messages from bots
-        if message.author.bot:
-            return
-            
-        # Check if the bot is mentioned or the message is a reply to the bot
-        is_mentioned = self.bot.user in message.mentions
-        is_reply_to_bot = message.reference and message.reference.resolved and message.reference.resolved.author.id == self.bot.user.id
-        
-        if not (is_mentioned or is_reply_to_bot):
-            # Not directed at the bot
-            return
-            
-        # Get content without bot mention
-        content = await message_service.smart_mention(message.clean_content, message, self.bot)
-        
-        # Handle empty content
-        if not content.strip():
-            await message.reply("How can I help you?")
-            return
-            
-        # Try to handle as a natural language command first
-        if await self.handle_natural_language_command(message, content):
-            return
-            
-        # Process with appropriate reasoning
-        try:
-            await self.process_thinking_request(message, content)
-        except Exception as e:
-            error_traceback = traceback.format_exc()
-            print(f"Error in on_message reasoning: {error_traceback}")
-            await message.reply(f"❌ I encountered an error: {str(e)[:1500]}")
     
     @commands.hybrid_command(name="clear", description="Clear your conversation history and data")
     async def clear_data_command(self, ctx):

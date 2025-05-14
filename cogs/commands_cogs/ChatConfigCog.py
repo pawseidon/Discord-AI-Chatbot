@@ -43,8 +43,8 @@ class ChatConfigCog(commands.Cog):
         """Toggle the bot inactive/active in the current channel - alternative name for toggleactive"""
         await self.toggleactive(ctx, persona)
 
-    @commands.hybrid_command(name="clear", description=current_language["bonk"])
-    async def clear(self, ctx):
+    @commands.hybrid_command(name="clearhistory", description=current_language["bonk"])
+    async def clearhistory(self, ctx):
         try:
             key = f"{ctx.author.id}-{ctx.channel.id}"
             message_history[key].clear()

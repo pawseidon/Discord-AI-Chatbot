@@ -316,7 +316,7 @@ async def get_crypto_price(crypto_name):
         return None
 
 async def search_internet(query):
-    """Perform internet search using DuckDuckGo with fallback options."""
+    """Perform internet search using Serper.dev API with robust fallbacks."""
     if not config['INTERNET_ACCESS']:
         return "Internet access has been disabled by user"
     
@@ -337,70 +337,116 @@ async def search_internet(query):
     
     # Track the search methods we've tried
     tried_methods = []
-    max_retries = 3
     
-    # First try: DuckDuckGo with retries and exponential backoff
-    try:
-        tried_methods.append("DuckDuckGo")
-        
-        # Run duckduckgo search in a threadpool since it's synchronous
-        def perform_ddg_search():
-            with DDGS() as ddgs:
-                results = []
-                for r in ddgs.text(query, max_results=6):
-                    results.append(r)
-                return results
-        
-        # Try with exponential backoff
-        for attempt in range(max_retries):
-            try:
-                results = await asyncio.to_thread(perform_ddg_search)
-                
-                if results:
-                    search_results = ""
-                    for index, result in enumerate(results[:6]):
-                        search_results += f'[{index}] Title: {result["title"]}\nURL: {result.get("href", "No URL")}\nSnippet: {result["body"]}\n\n'
-                    
-                    return search_results
-                else:
-                    # If no results but no error, try next method
-                    print(f"DuckDuckGo returned no results for: {query}")
-                    break
-                    
-            except Exception as e:
-                # Check if it's a rate limit error (could be different error messages)
-                if any(error_term in str(e).lower() for error_term in ["rate", "limit", "429", "too many requests"]):
-                    # If it's the last retry, move on to the next method
-                    if attempt == max_retries - 1:
-                        print(f"DuckDuckGo rate limited after {max_retries} attempts, trying alternative methods")
-                        break
-                    
-                    # Otherwise, wait with exponential backoff
-                    wait_time = (2 ** attempt) + random.random()
-                    print(f"DuckDuckGo rate limited, retrying in {wait_time:.2f} seconds (attempt {attempt+1}/{max_retries})")
-                    await asyncio.sleep(wait_time)
-                else:
-                    # For other errors, just try the next method
-                    print(f"DuckDuckGo search error: {e}")
-                    break
-    except Exception as e:
-        print(f"Error setting up DuckDuckGo search: {e}")
-
-    # If we reach here, DuckDuckGo has failed or been rate limited
+    # 1. Try Serper.dev API first (if API key is available)
+    serper_api_key = os.environ.get("SERPER_API_KEY")
+    if serper_api_key:
+        try:
+            tried_methods.append("Serper.dev API")
+            print("Using Serper.dev API for search")
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://google.serper.dev/search",
+                    headers={"X-API-KEY": serper_api_key, "Content-Type": "application/json"},
+                    json={"q": query, "num": 5}
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # Process organic search results
+                        search_results = ""
+                        result_count = 0
+                        
+                        if "organic" in data:
+                            for index, result in enumerate(data["organic"][:5]):
+                                title = result.get("title", "No Title")
+                                link = result.get("link", "No URL")
+                                snippet = result.get("snippet", "No description available.")
+                                
+                                search_results += f"[{result_count}] Title: {title}\nURL: {link}\nSnippet: {snippet}\n\n"
+                                result_count += 1
+                        
+                        # Add knowledge graph if available
+                        if "knowledgeGraph" in data:
+                            kg = data["knowledgeGraph"]
+                            if "title" in kg:
+                                search_results += f"Knowledge Graph: {kg.get('title')}\n"
+                                if "description" in kg:
+                                    search_results += f"Description: {kg.get('description')}\n"
+                                if "attributes" in kg:
+                                    search_results += "Attributes:\n"
+                                    for key, value in kg["attributes"].items():
+                                        search_results += f"- {key}: {value}\n"
+                                search_results += "\n"
+                        
+                        if search_results:
+                            return search_results
+        except Exception as e:
+            print(f"Serper.dev API error: {e}")
     
-    # Second try: Use Google search via alternative method
+    # 2. Try SerpAPI for Google (if API key is available)
+    serpapi_key = os.environ.get("SERPAPI_KEY")
+    if serpapi_key:
+        try:
+            tried_methods.append("SerpAPI")
+            print("Using SerpAPI for search")
+            
+            async with aiohttp.ClientSession() as session:
+                params = {
+                    "engine": "google",
+                    "q": query,
+                    "api_key": serpapi_key,
+                    "num": "5"
+                }
+                async with session.get("https://serpapi.com/search", params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        search_results = ""
+                        result_count = 0
+                        
+                        if "organic_results" in data:
+                            for index, result in enumerate(data["organic_results"][:5]):
+                                title = result.get("title", "No Title")
+                                link = result.get("link", "No URL")
+                                snippet = result.get("snippet", "No description available.")
+                                
+                                search_results += f"[{result_count}] Title: {title}\nURL: {link}\nSnippet: {snippet}\n\n"
+                                result_count += 1
+                        
+                        if search_results:
+                            return search_results
+        except Exception as e:
+            print(f"SerpAPI error: {e}")
+    
+    # 3. Try direct Google scraping with improved resilience and random delays
     try:
-        tried_methods.append("Google")
-        print(f"Trying Google search for: {query}")
+        tried_methods.append("Google Scraping")
+        print(f"Trying Google scraping for: {query}")
+        
+        # Add a random delay before scraping to avoid pattern detection
+        await asyncio.sleep(random.uniform(1, 3))
         
         async with aiohttp.ClientSession() as session:
             # Create a Google-like search URL
             encoded_query = urllib.parse.quote(query)
-            url = f"https://www.google.com/search?q={encoded_query}"
+            # Use a random Google domain to distribute requests
+            google_domains = ["www.google.com", "www.google.co.uk", "www.google.ca", "www.google.com.au"]
+            domain = random.choice(google_domains)
+            url = f"https://{domain}/search?q={encoded_query}&num=8"
             
-            # Use a realistic user agent
+            # Rotate user agents to appear more natural
+            user_agents = [
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0"
+            ]
+            
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": random.choice(user_agents),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Accept-Encoding": "gzip, deflate, br",
@@ -410,75 +456,265 @@ async def search_internet(query):
                 "Sec-Fetch-Dest": "document",
                 "Sec-Fetch-Mode": "navigate",
                 "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1"
+                "Sec-Fetch-User": "?1",
+                # Add a random referer to appear more natural
+                "Referer": random.choice([
+                    "https://www.google.com/",
+                    "https://www.bing.com/",
+                    "https://duckduckgo.com/"
+                ])
             }
             
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, timeout=15) as response:
                 if response.status == 200:
                     html = await response.text()
                     
-                    # Simple parsing to extract search results
-                    # This is a basic implementation and could be improved with better parsing
+                    # More robust parsing to extract search results
                     soup = BeautifulSoup(html, 'html.parser')
                     
-                    # Extract search results
+                    # Initialize search results
                     search_results = ""
                     result_count = 0
                     
-                    # Look for result blocks
-                    for div in soup.select("div.g"):
+                    # Try multiple selector patterns to find search results
+                    # Google changes their HTML structure frequently
+                    selectors = [
+                        "div.g", 
+                        "div.Gx5Zad", 
+                        "div.tF2Cxc",
+                        "div.egMi0",
+                        ".v7W49e > div" # Newer Google layout
+                    ]
+                    
+                    # Try all selectors until we find results
+                    results = []
+                    for selector in selectors:
+                        results = soup.select(selector)
+                        if results and len(results) >= 3:  # Make sure we have meaningful results
+                            break
+                    
+                    # If none of the specific selectors worked, try a more general approach
+                    if not results or len(results) < 3:
+                        # Look for links with titles and snippets near them
+                        results = []
+                        for h3 in soup.select("h3"):
+                            parent_div = h3.find_parent("div")
+                            if parent_div:
+                                results.append(parent_div)
+                    
+                    # Process the results
+                    for result_div in results[:8]:  # Limit to top 8 results
                         try:
-                            title_element = div.select_one("h3")
-                            link_element = div.select_one("a")
-                            snippet_element = div.select_one("div.VwiC3b")
+                            # Try different patterns for title
+                            title_element = (
+                                result_div.select_one("h3") or 
+                                result_div.select_one(".DKV0Md") or
+                                result_div.select_one(".LC20lb")
+                            )
                             
-                            if title_element and link_element and snippet_element:
+                            # Try different patterns for link
+                            link_element = result_div.select_one("a")
+                            
+                            # Try different patterns for snippet
+                            snippet_element = (
+                                result_div.select_one(".VwiC3b") or 
+                                result_div.select_one(".lEBKkf") or
+                                result_div.select_one(".s3v9rd") or
+                                result_div.select_one(".st")
+                            )
+                            
+                            # Extract data if we found the elements
+                            if title_element and link_element:
                                 title = title_element.get_text().strip()
                                 link = link_element.get("href")
-                                if link.startswith("/url?"):
-                                    # Extract the actual URL from Google's redirect URL
-                                    link = link.split("?q=")[1].split("&")[0]
-                                snippet = snippet_element.get_text().strip()
                                 
+                                # Clean Google's redirect links
+                                if link and link.startswith("/url?"):
+                                    link = link.split("?q=")[1].split("&")[0]
+                                elif link and not link.startswith("http"):
+                                    continue  # Skip non-web results
+                                
+                                # Extract snippet if available, or use a placeholder
+                                snippet = "No description available."
+                                if snippet_element:
+                                    snippet = snippet_element.get_text().strip()
+                                
+                                # Add to results
                                 search_results += f"[{result_count}] Title: {title}\nURL: {link}\nSnippet: {snippet}\n\n"
                                 result_count += 1
                                 
                                 if result_count >= 5:
                                     break
                         except Exception as e:
+                            print(f"Error parsing a search result: {e}")
                             continue
+                    
+                    # If we found any valid results, return them
+                    if search_results and result_count >= 3:  # Ensure we have at least 3 meaningful results
+                        return search_results
+                    
+                    # Check if the page contains CAPTCHA or other blocks
+                    if "captcha" in html.lower() or "unusual traffic" in html.lower():
+                        print("Google search is asking for CAPTCHA verification")
+                    else:
+                        print("Google search returned HTML but couldn't extract results")
+        
+        # Add a delay before trying the next method
+        await asyncio.sleep(random.uniform(1, 2))
+    except Exception as e:
+        print(f"Google scraping error: {e}")
+        traceback.print_exc()
+
+    # 4. Try Bing with improved scraping techniques
+    try:
+        tried_methods.append("Bing")
+        print(f"Trying Bing search for: {query}")
+        
+        # Add a random delay to appear more natural
+        await asyncio.sleep(random.uniform(1, 3))
+        
+        async with aiohttp.ClientSession() as session:
+            # Bing search URL
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://www.bing.com/search?q={encoded_query}&count=10"
+            
+            # Rotate user agents
+            user_agents = [
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+            ]
+            
+            headers = {
+                "User-Agent": random.choice(user_agents),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Referer": "https://www.bing.com/",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                # Add cookies to appear like a returning visitor
+                "Cookie": "SRCHHPGUSR=HV=1641717770; SRCHUSR=DOB=20220109; _EDGE_S=ui=en; _EDGE_V=1"
+            }
+            
+            # Use a proxy if needed
+            proxy = None
+            proxy_url = os.environ.get("HTTP_PROXY")
+            if proxy_url:
+                proxy = proxy_url
+                print(f"Using proxy: {proxy}")
+            
+            async with session.get(url, headers=headers, proxy=proxy, timeout=15) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    
+                    # Parse the HTML
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    # Initialize search results
+                    search_results = ""
+                    result_count = 0
+                    
+                    # Bing search results are contained in <li class="b_algo"> elements
+                    results = soup.select("li.b_algo")
+                    
+                    # If the default selector didn't work, try some alternatives
+                    if not results or len(results) < 3:
+                        # Try alternative selectors
+                        results = soup.select("div.b_title") or soup.select(".b_algo")
+                        
+                        # If still no results, look for any links with proper titles
+                        if not results or len(results) < 3:
+                            results = []
+                            for h2 in soup.select("h2"):
+                                if h2.select_one("a"):
+                                    results.append(h2.find_parent("div") or h2)
+                    
+                    for result in results[:6]:
+                        try:
+                            # Find the title and link
+                            title_element = result.select_one("h2") or result.select_one(".b_title") or result.select_one("a")
+                            
+                            if title_element:
+                                # If title_element is directly an <a> tag
+                                if title_element.name == "a":
+                                    link_element = title_element
+                                else:
+                                    # Otherwise look for the first <a> tag inside title_element
+                                    link_element = title_element.select_one("a")
+                                
+                                # Find description/snippet
+                                snippet_element = (
+                                    result.select_one(".b_caption p") or 
+                                    result.select_one(".b_snippet") or
+                                    result.select_one("p")
+                                )
+                                
+                                if link_element:
+                                    title = title_element.get_text().strip()
+                                    link = link_element.get("href")
+                                    
+                                    # Ensure the link is absolute
+                                    if link and not link.startswith(("http:", "https:")):
+                                        if link.startswith("/"):
+                                            link = f"https://www.bing.com{link}"
+                                        else:
+                                            continue  # Skip invalid links
+                                    
+                                    # Extract snippet if available
+                                    snippet = "No description available."
+                                    if snippet_element:
+                                        snippet = snippet_element.get_text().strip()
+                                    
+                                    search_results += f"[{result_count}] Title: {title}\nURL: {link}\nSnippet: {snippet}\n\n"
+                                    result_count += 1
+                                    
+                                    if result_count >= 5:
+                                        break
+                        except Exception as e:
+                            print(f"Error parsing Bing result: {e}")
+                            continue
+                    
+                    if search_results and result_count >= 3:  # Ensure we have at least 3 meaningful results
+                        return search_results
+    except Exception as e:
+        print(f"Bing search error: {e}")
+        traceback.print_exc()
+    
+    # 5. Try free search API service as last resort
+    try:
+        tried_methods.append("Free Search API")
+        print("Trying Free Search API")
+        
+        async with aiohttp.ClientSession() as session:
+            # Use a free search API as last resort
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://ddg-api.herokuapp.com/search?query={encoded_query}&limit=5"
+            
+            async with session.get(url, timeout=15) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    search_results = ""
+                    result_count = 0
+                    
+                    if "results" in data:
+                        for index, result in enumerate(data["results"][:5]):
+                            title = result.get("title", "No Title")
+                            link = result.get("link", "No URL")
+                            snippet = result.get("snippet", "No description available.")
+                            
+                            search_results += f"[{result_count}] Title: {title}\nURL: {link}\nSnippet: {snippet}\n\n"
+                            result_count += 1
                     
                     if search_results:
                         return search_results
-                    
-                    # If parsing failed but we got a 200 response, return a simplified response
-                    if not search_results:
-                        return f"Successfully accessed search results for '{query}', but couldn't parse the results. Please try a more specific query."
-                else:
-                    print(f"Google search returned status code: {response.status}")
-                    # Continue to the next method if this fails
     except Exception as e:
-        print(f"Google search error: {e}")
-
-    # Third try: Simple web search using a different endpoint
-    try:
-        tried_methods.append("Alternative Search")
-        print(f"Trying alternative search for: {query}")
-        
-        # You could implement various fallbacks here
-        # For example, using a simple API like SerpAPI (with API key) or a different search engine
-        
-        # This is a placeholder for demonstration
-        # In a real implementation, you would integrate with another search provider
-        
-        # For now, we'll return a message about the failure of previous methods
-        return f"Unable to perform a search for '{query}'. I tried {', '.join(tried_methods)}, but encountered rate limits or other issues. Please try again later with a more specific query."
-        
-    except Exception as e:
-        print(f"Alternative search error: {e}")
+        print(f"Free Search API error: {e}")
     
     # If all methods fail, return an error message
-    return f"I encountered difficulties searching for '{query}'. I tried {', '.join(tried_methods)} but wasn't able to get results. Please try again later or rephrase your query."
+    return f"I encountered difficulties searching for '{query}'. I tried {', '.join(tried_methods)} but wasn't able to get results. Search engines might be rate-limiting our requests. Please try again later with a more specific query or consider adding a search API key for better results."
 
 async def stream_response(messages, model, client):
     """
@@ -646,224 +882,236 @@ async def generate_response(instructions, history, stream=False):
         # Fallback to original implementation if agent_service fails
         global local_client, remote_client
         
-        # Legacy code starts here
-        # Check if the latest message contains a query that might need real-time information
-        latest_message = history[-1]["content"].lower() if history else ""
-        
-        # Common triggers for real-time information
-        real_time_triggers = [
-            "current price", "bitcoin price", "crypto price",
-            "latest news", "weather in", "what is the price of",
-            "how much is", "stock price", "current event",
-            "today's", "recent", "latest", "now", "current status"
-        ]
-        
-        # Simple check for real-time queries
-        needs_real_time_info = any(trigger in latest_message for trigger in real_time_triggers)
-        
-        # Additional context from internet search if needed
-        internet_context = ""
-        news_context = ""
-        
-        # Check if this is a news-related query
-        is_news_query, _ = await detect_news_query(latest_message)
-        
-        if is_news_query:
-            # If it's a news query, get relevant news articles
-            news_context = await get_news_context(latest_message)
-            if news_context:
-                print("Found relevant news articles for the query")
-        
-        if needs_real_time_info and internet_access:
-            print("Detected request for real-time information. Performing internet search...")
+        try:
+            # Legacy code starts here
+            # Check if the latest message contains a query that might need real-time information
+            latest_message = history[-1]["content"].lower() if history else ""
             
-            # Extract relevant search terms by removing bot's name and keeping keywords
-            search_query = latest_message
+            # Common triggers for real-time information
+            real_time_triggers = [
+                "current price", "bitcoin price", "crypto price",
+                "latest news", "weather in", "what is the price of",
+                "how much is", "stock price", "current event",
+                "today's", "recent", "latest", "now", "current status"
+            ]
             
-            # Get bot name and triggers dynamically
-            bot_names, trigger_words = get_bot_names_and_triggers()
+            # Simple check for real-time queries
+            needs_real_time_info = any(trigger in latest_message for trigger in real_time_triggers)
             
-            # Remove bot name references from the query
-            for name in bot_names:
-                search_query = search_query.replace(name, "").strip()
+            # Additional context from internet search if needed
+            internet_context = ""
+            news_context = ""
             
-            # Check if this is a cryptocurrency price query
-            is_crypto_query = any(term in search_query for term in ["crypto", "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "price of", "how much is"])
+            # Check if this is a news-related query
+            is_news_query, _ = await detect_news_query(latest_message)
             
-            crypto_terms = ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "doge", "cardano", "ada", "bnb", "xrp", "polkadot", "dot", "avalanche", "avax", "polygon", "matic"]
-            found_crypto = None
+            if is_news_query:
+                # If it's a news query, get relevant news articles
+                news_context = await get_news_context(latest_message)
+                if news_context:
+                    print("Found relevant news articles for the query")
             
-            for crypto in crypto_terms:
-                if crypto in search_query:
-                    found_crypto = crypto
-                    break
-            
-            if is_crypto_query and found_crypto:
-                print(f"Detected cryptocurrency price query for: {found_crypto}")
-                # Extract just the crypto name for better search
-                for prefix in ["how much is", "what is the price of", "current price of", "price of"]:
-                    if prefix in search_query:
-                        search_query = search_query.replace(prefix, "").strip()
+            if needs_real_time_info and internet_access:
+                print("Detected request for real-time information. Performing internet search...")
                 
-                # Try to get price from CoinGecko API first
-                crypto_price_data = await get_crypto_price(search_query)
+                # Extract relevant search terms by removing bot's name and keeping keywords
+                search_query = latest_message
                 
-                if crypto_price_data:
-                    # Include current date/time info in the context to make it clear this is current data
-                    current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
-                    internet_context = f"\n\nHere is current cryptocurrency information as of {current_datetime}:\n{crypto_price_data}\n\nUse this information to provide an up-to-date response about the cryptocurrency price."
-                else:
-                    # Fall back to regular search if API fails
-                    print(f"Falling back to regular search for: {search_query} price")
-                    # Add current date to ensure recent results
-                    search_query += f" price today {timestamp_cache['current_year']} {timestamp_cache['current_month']}/{timestamp_cache['current_day']}"
-                    internet_results = await search_internet(search_query)
-                    if internet_results and "Error performing internet search" not in internet_results:
-                        current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
-                        internet_context = f"\n\nHere is some real-time information from the internet that might help you answer this query as of {current_datetime}:\n{internet_results}\n\nUse this information to provide an up-to-date response about current prices. The current date is {timestamp_cache['current_date']}."
-            else:
-                # Don't do a web search if we already have news context
-                if not news_context:
-                    # Extract just the important part for searching
-                    # For queries like "how much is X" or "what is the price of X", extract just the X part
+                # Get bot name and triggers dynamically
+                bot_names, trigger_words = get_bot_names_and_triggers()
+                
+                # Remove bot name references from the query
+                for name in bot_names:
+                    search_query = search_query.replace(name, "").strip()
+                
+                # Check if this is a cryptocurrency price query
+                is_crypto_query = any(term in search_query for term in ["crypto", "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "price of", "how much is"])
+                
+                crypto_terms = ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "doge", "cardano", "ada", "bnb", "xrp", "polkadot", "dot", "avalanche", "avax", "polygon", "matic"]
+                found_crypto = None
+                
+                for crypto in crypto_terms:
+                    if crypto in search_query:
+                        found_crypto = crypto
+                        break
+                
+                if is_crypto_query and found_crypto:
+                    print(f"Detected cryptocurrency price query for: {found_crypto}")
+                    # Extract just the crypto name for better search
                     for prefix in ["how much is", "what is the price of", "current price of", "price of"]:
                         if prefix in search_query:
                             search_query = search_query.replace(prefix, "").strip()
-                            search_query += " price"  # Add "price" to get more relevant results
                     
-                    # If it contains multiple phrases with "in", like "weather in New York", keep just that part
-                    if "weather in" in search_query:
-                        search_query = "weather in" + search_query.split("weather in")[1].strip()
-                        
-                    # Clean up any remaining question marks or other punctuation
-                    search_query = search_query.replace("?", "").replace("!", "").strip()
+                    # Try to get price from CoinGecko API first
+                    crypto_price_data = await get_crypto_price(search_query)
                     
-                    # Add current date info for time-sensitive queries
-                    if any(term in search_query for term in ["today", "current", "now", "latest"]):
-                        search_query += f" {timestamp_cache['current_date']}"
-                    
-                    print(f"Searching the internet for: {search_query}")
-                    internet_results = await search_internet(search_query)
-                    if internet_results and "Error performing internet search" not in internet_results:
+                    if crypto_price_data:
+                        # Include current date/time info in the context to make it clear this is current data
                         current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
-                        internet_context = f"\n\nHere is some real-time information from the internet that might help you answer this query:\n{internet_results}\n\nUse this information to provide an up-to-date response. The current date and time is {current_datetime}."
-        
-        # Explicitly add current date/time info to the instructions
-        current_time_info = f"\n\nThe current date and time is {timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC. Today is {timestamp_cache['current_year']}-{timestamp_cache['current_month']:02d}-{timestamp_cache['current_day']:02d}."
-        
-        # Add all context to instructions
-        enhanced_instructions = instructions + current_time_info
-        
-        # Add news context if found
-        if news_context:
-            enhanced_instructions += f"\n\n{news_context}\nUse this real-time news information to provide an up-to-date response about current events."
-        
-        # Add internet context if found
-        if internet_context:
-            enhanced_instructions += internet_context
-        
-        messages = [
-                {"role": "system", "name": "instructions", "content": enhanced_instructions},
-                *history,
-            ]
-        
-        # Check if we should use remote API (GROQ) or fall back to local model
-        use_local_model = config.get('USE_LOCAL_MODEL', False)
-        api_key_available = os.environ.get("API_KEY") is not None
-        
-        # If API key isn't available but remote model is requested, fall back to local model
-        if not use_local_model and not api_key_available:
-            print("API_KEY not found in environment but remote model requested. Falling back to local model.")
-            use_local_model = True
-            
-        if use_local_model:
-            print("Using local LLM model as configured in settings")
-            if local_client is None:
-                local_client = get_local_client()
-                
-            # If streaming is requested, return a streamed response
-            if stream:
-                return stream_response(messages, config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'), local_client)
-                
-            try:
-                print(f"Using local model: {config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407')}")
-                response = await local_client.chat.completions.create(
-                    model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
-                    messages=messages,
-                )
-                
-                # Record successful LLM call
-                record_llm_success()
-                
-                # Cache the successful response for future fallback
-                if history and len(history) > 0:
-                    last_message = history[-1]["content"]
-                    cache_successful_response(last_message, response.choices[0].message.content)
-                    
-                return response.choices[0].message.content
-            except Exception as e:
-                print(f"Error with local model: {e}")
-                print(f"Stack trace: {traceback.format_exc()}")
-                
-                # Record the failure
-                record_llm_failure()
-                
-                # Retry with remote API if available
-                if api_key_available:
-                    print("Trying remote API as fallback...")
-                    use_local_model = False
+                        internet_context = f"\n\nHere is current cryptocurrency information as of {current_datetime}:\n{crypto_price_data}\n\nUse this information to provide an up-to-date response about the cryptocurrency price."
+                    else:
+                        # Fall back to regular search if API fails
+                        print(f"Falling back to regular search for: {search_query} price")
+                        # Add current date to ensure recent results
+                        search_query += f" price today {timestamp_cache['current_year']} {timestamp_cache['current_month']}/{timestamp_cache['current_day']}"
+                        internet_results = await search_internet(search_query)
+                        if internet_results and "Error performing internet search" not in internet_results:
+                            current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
+                            internet_context = f"\n\nHere is some real-time information from the internet that might help you answer this query as of {current_datetime}:\n{internet_results}\n\nUse this information to provide an up-to-date response about current prices. The current date is {timestamp_cache['current_date']}."
                 else:
-                    # Return a fallback response
-                    last_message = history[-1]["content"] if history and len(history) > 0 else ""
-                    return await get_fallback_response(last_message)
+                    # Don't do a web search if we already have news context
+                    if not news_context:
+                        # Extract just the important part for searching
+                        # For queries like "how much is X" or "what is the price of X", extract just the X part
+                        for prefix in ["how much is", "what is the price of", "current price of", "price of"]:
+                            if prefix in search_query:
+                                search_query = search_query.replace(prefix, "").strip()
+                                search_query += " price"  # Add "price" to get more relevant results
+                        
+                        # If it contains multiple phrases with "in", like "weather in New York", keep just that part
+                        if "weather in" in search_query:
+                            search_query = "weather in" + search_query.split("weather in")[1].strip()
+                            
+                        # Clean up any remaining question marks or other punctuation
+                        search_query = search_query.replace("?", "").replace("!", "").strip()
+                        
+                        # Add current date info for time-sensitive queries
+                        if any(term in search_query for term in ["today", "current", "now", "latest"]):
+                            search_query += f" {timestamp_cache['current_date']}"
+                        
+                        print(f"Searching the internet for: {search_query}")
+                        internet_results = await search_internet(search_query)
+                        if internet_results and "Error performing internet search" not in internet_results:
+                            current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
+                            internet_context = f"\n\nHere is some real-time information from the internet that might help you answer this query:\n{internet_results}\n\nUse this information to provide an up-to-date response. The current date and time is {current_datetime}."
+            
+            # Explicitly add current date/time info to the instructions
+            current_time_info = f"\n\nThe current date and time is {timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC. Today is {timestamp_cache['current_year']}-{timestamp_cache['current_month']:02d}-{timestamp_cache['current_day']:02d}."
+            
+            # Add all context to instructions
+            enhanced_instructions = instructions + current_time_info
+            
+            # Add news context if found
+            if news_context:
+                enhanced_instructions += f"\n\n{news_context}\nUse this real-time news information to provide an up-to-date response about current events."
+            
+            # Add internet context if found
+            if internet_context:
+                enhanced_instructions += internet_context
+            
+            messages = [
+                    {"role": "system", "name": "instructions", "content": enhanced_instructions},
+                    *history,
+                ]
+            
+            # Check if we should use remote API (GROQ) or fall back to local model
+            use_local_model = config.get('USE_LOCAL_MODEL', False)
+            api_key_available = os.environ.get("API_KEY") is not None
+            
+            # If API key isn't available but remote model is requested, fall back to local model
+            if not use_local_model and not api_key_available:
+                print("API_KEY not found in environment but remote model requested. Falling back to local model.")
+                use_local_model = True
+            
+            if use_local_model:
+                print("Using local LLM model as configured in settings")
+                if local_client is None:
+                    local_client = get_local_client()
                     
-        # Using remote API (GROQ)
-        if not use_local_model:
-            print("Using remote LLM model")
-            if remote_client is None:
-                remote_client = get_remote_client()
-                
-            # If streaming is requested, return a streamed response
-            if stream:
-                return stream_response(messages, config['MODEL_ID'], remote_client)
-                
-            try:
-                print(f"Using remote model: {config['MODEL_ID']}")
-                response = await remote_client.chat.completions.create(
-                    model=config['MODEL_ID'],
-                    messages=messages,
-                )
-                
-                # Record successful LLM call
-                record_llm_success()
-                
-                # Cache the successful response for future fallback
-                if history and len(history) > 0:
-                    last_message = history[-1]["content"]
-                    cache_successful_response(last_message, response.choices[0].message.content)
+                # If streaming is requested, return a streamed response
+                if stream:
+                    return stream_response(messages, config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'), local_client)
                     
-                return response.choices[0].message.content
-            except Exception as e:
-                print(f"Error with remote model: {e}")
-                
-                # Record the failure
-                record_llm_failure()
-                
-                # Attempt with local model if available
-                if local_client:
-                    print("Trying local model as fallback...")
-                    try:
-                        response = await local_client.chat.completions.create(
-                            model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
-                            messages=messages,
-                        )
-                        return response.choices[0].message.content
-                    except Exception as local_error:
-                        print(f"Local model fallback also failed: {local_error}")
-                
-                # Get a fallback response from cached/pre-defined responses
+                try:
+                    print(f"Using local model: {config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407')}")
+                    response = await local_client.chat.completions.create(
+                        model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
+                        messages=messages,
+                    )
+                    
+                    # Record successful LLM call
+                    record_llm_success()
+                    
+                    # Cache the successful response for future fallback
+                    if history and len(history) > 0:
+                        last_message = history[-1]["content"]
+                        cache_successful_response(last_message, response.choices[0].message.content)
+                        
+                    return response.choices[0].message.content
+                except Exception as e:
+                    print(f"Error with local model: {e}")
+                    print(f"Stack trace: {traceback.format_exc()}")
+                    
+                    # Record the failure
+                    record_llm_failure()
+                    
+                    # Retry with remote API if available
+                    if api_key_available:
+                        print("Trying remote API as fallback...")
+                        use_local_model = False
+            else:
+                # Return a fallback response
                 last_message = history[-1]["content"] if history and len(history) > 0 else ""
                 return await get_fallback_response(last_message)
+            
+            # Using remote API (GROQ)
+            if not use_local_model:
+                print("Using remote LLM model")
+                if remote_client is None:
+                    remote_client = get_remote_client()
+                    
+                # If streaming is requested, return a streamed response
+                if stream:
+                    return stream_response(messages, config['MODEL_ID'], remote_client)
+                
+                try:
+                    print(f"Using remote model: {config['MODEL_ID']}")
+                    response = await remote_client.chat.completions.create(
+                        model=config['MODEL_ID'],
+                        messages=messages,
+                    )
+                    
+                    # Record successful LLM call
+                    record_llm_success()
+                    
+                    # Cache the successful response for future fallback
+                    if history and len(history) > 0:
+                        last_message = history[-1]["content"]
+                        cache_successful_response(last_message, response.choices[0].message.content)
+                        
+                    return response.choices[0].message.content
+                except Exception as e:
+                    print(f"Error with remote model: {e}")
+                    
+                    # Record the failure
+                    record_llm_failure()
+                    
+                    # Attempt with local model if available
+                    if local_client:
+                        print("Trying local model as fallback...")
+                        try:
+                            response = await local_client.chat.completions.create(
+                                model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
+                                messages=messages,
+                            )
+                            return response.choices[0].message.content
+                        except Exception as local_error:
+                            print(f"Local model fallback also failed: {local_error}")
+                    
+                    # Get a fallback response from cached/pre-defined responses
+                    last_message = history[-1]["content"] if history and len(history) > 0 else ""
+                    return await get_fallback_response(last_message)
+        except Exception as e:
+            print(f"Unexpected error in generate_response: {e}")
+            print(f"Stack trace: {traceback.format_exc()}")
+            
+            # Use fallback response as a last resort
+            if history and len(history) > 0:
+                last_message = history[-1]["content"]
+                fallback_response = await get_fallback_response(last_message)
+                return fallback_response
+            
+            return "I'm experiencing technical difficulties. Please try again later."
     except Exception as e:
         print(f"Unexpected error in generate_response: {e}")
         print(f"Stack trace: {traceback.format_exc()}")

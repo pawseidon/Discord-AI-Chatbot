@@ -1,68 +1,73 @@
 # Multi-Agent Architecture Documentation
 
-This document provides a detailed overview of the multi-agent architecture implemented in this Discord AI Chatbot. The architecture allows for sophisticated problem-solving through specialized agents, intelligent orchestration, and hybrid neural-symbolic reasoning.
+This document provides a comprehensive overview of the multi-agent architecture implemented in this Discord AI Chatbot. The architecture allows for sophisticated problem-solving through specialized agents, intelligent orchestration, and hybrid neural-symbolic reasoning.
+
+## Architecture Overview
+
+The Discord AI Chatbot is designed as a **modular multi-agent system**, with each "agent" (or reasoning mode) specialized for a task (e.g., creative writing, factual retrieval, logical deduction). This multi-agent architecture divides complex problems into tractable sub-tasks.
+
+Each agent runs its own LLM prompt (persona, instructions, tools) and memory. For example, one agent excels at sequential chain-of-thought reasoning, another at web search and retrieval, another at creative brainstorming.
+
+A top-level **Orchestrator** (Planner/Supervisor agent) decomposes user queries and routes sub-tasks to the appropriate agent. This "supervisor" can itself be an LLM agent using tools that include other agents.
 
 ## Core Components
 
-### 1. Agent Orchestrator (`agent_orchestrator.py`)
+### 1. Agent Service (`services/agent_service.py`)
 
-The Agent Orchestrator serves as the central coordinator for all agent interactions. It:
+The Agent Service serves as the central coordination point for reasoning detection and agent delegation. It:
 
-- Analyzes incoming user queries and determines the most appropriate reasoning approach
-- Instantiates specialized agents based on detected reasoning requirements
-- Handles agent delegation and inter-agent communication
-- Manages conversation context and history
-- Ensures coherent responses back to the user
+- Analyzes incoming user queries and determines appropriate reasoning approaches
+- Manages specialized agents for different reasoning types
+- Handles emoji reactions to indicate reasoning types
+- Provides a unified interface for agent interaction
+- Manages memory and context for multi-turn conversations
 
 ```python
 # Example usage
-orchestrator = AgentOrchestrator(llm_provider=llm, tools_manager=tools_manager)
-response = await orchestrator.process_query(
+from bot_utilities.services.agent_service import agent_service
+
+response = await agent_service.process_query(
     query="Explain how rainbows form and include some scientific details.",
+    user_id="user_456",
     conversation_id="conversation_123",
-    user_id="user_456"
+    reasoning_type="sequential"  # Optional explicit reasoning type
 )
 ```
 
-### 2. Agent Configuration (`agent_config.py`)
+### 2. Agent Orchestrator (`agent_orchestrator.py`)
 
-Each agent is defined by its configuration, which specifies:
+The Agent Orchestrator is the implementation layer that handles the orchestration mechanics. It:
 
-- Agent ID and reasoning type
-- System prompt that defines its behavior
-- Available tools and capabilities
-- Temperature and other generation parameters
+- Instantiates specialized agents based on detected reasoning requirements
+- Handles agent delegation and inter-agent communication
+- Manages conversation context and history
+- Executes tool calls from agents
+- Ensures coherent responses back to the user
 
-```python
-# Example agent configuration
-config = AgentConfig(
-    agent_id="sequential",
-    system_prompt="You are a Sequential Thinking agent that breaks down complex problems...",
-    tools=["calculator", "search", "step_analyzer"],
-    temperature=0.3,
-    max_tokens=2000
-)
-```
+### 3. Memory Service (`services/memory_service.py`)
 
-### 3. Agent Memory System (`agent_memory.py`)
-
-The memory system provides multi-level memory capabilities:
+The Memory Service provides multi-level memory capabilities:
 
 - Conversation memory for tracking dialogue history
 - Agent-specific scratchpads for working memory
-- Shared memory contexts for cross-agent knowledge sharing
-- Vector-based semantic memory for relevant context retrieval
 - User preferences and personalization storage
+- Vector-based semantic memory for relevant context retrieval
 
 ```python
 # Example memory usage
-memory_manager = AgentMemoryManager()
-await memory_manager.store_in_agent_memory(
-    agent_id="sequential",
+from bot_utilities.services.memory_service import memory_service
+
+# Store user preference
+await memory_service.set_user_preference(
     user_id="user_123",
-    conversation_id="conv_456",
-    key="problem_decomposition",
-    value=["Step 1: Understand the problem", "Step 2: Break it down"]
+    preference_key="default_reasoning",
+    preference_value="sequential"
+)
+
+# Retrieve conversation history
+history = await memory_service.get_conversation_history(
+    conversation_id="server_id:channel_id",
+    limit=10
 )
 ```
 
@@ -70,110 +75,167 @@ await memory_manager.store_in_agent_memory(
 
 The Tools Manager provides access to external tools and capabilities:
 
-- Calculator and mathematical operations
 - Web search and information retrieval
+- Calculator and mathematical operations
 - Fact checking and verification
-- Data analysis and visualization
-- Knowledge graph creation
-- Symbolic reasoning engines
+- Memory management tools
+- Knowledge base access
 
-```python
-# Example tool usage
-tools_manager = AgentToolsManager()
-result = await tools_manager.execute_tool(
-    name="calculator",
-    params={"expression": "2 * (3 + 4)"}
-)
-```
+### 5. Workflow Service (`services/workflow_service.py`)
 
-### 5. Workflow Manager (`agent_workflow_manager.py`)
+The Workflow Service implements LangGraph integration for complex agent workflows:
 
-The Workflow Manager implements LangGraph integration for complex agent workflows:
-
-- Graph-based workflow definitions
-- State management between steps
+- Graph-based workflow definitions with nodes and edges
+- State management between reasoning steps
 - Conditional branching and routing
-- Cycles and feedback loops
-- Parallel agent execution
+- Cycles and feedback loops for iterative reasoning
 
 ```python
-# Example workflow creation
-workflow = AgentWorkflowManager()
-graph = workflow.create_workflow(
-    nodes=["planner", "researcher", "writer"],
-    edges=[
-        ("planner", "researcher", lambda state: state["needs_research"]),
-        ("researcher", "writer", lambda state: True)
-    ]
+# Example workflow usage
+from bot_utilities.services.workflow_service import workflow_service
+
+response = await workflow_service.create_and_run_default_workflow(
+    user_query="Compare the economic policies of the last three presidents",
+    user_id="user_123",
+    conversation_id="conversation_456"
 )
 ```
 
-### 6. Symbolic Reasoning (`symbolic_reasoning.py`)
+### 6. Symbolic Reasoning Service (`services/symbolic_reasoning_service.py`)
 
-The Symbolic Reasoning module adds deterministic reasoning capabilities:
+The Symbolic Reasoning Service adds deterministic reasoning capabilities:
 
 - Mathematical problem solving with step-by-step solutions
 - Logical rule application and inference
-- Data structure analysis
-- Fact verification against knowledge bases
+- Expression evaluation and verification
+- Formal mathematical operations
 
 ```python
 # Example symbolic reasoning
-reasoner = symbolic_reasoning_registry.get_reasoner()
-result = await reasoner.solve_math_problem("(15 * 7) + (22 / 2)")
+from bot_utilities.services.symbolic_reasoning_service import symbolic_reasoning_service
+
+result = await symbolic_reasoning_service.evaluate_expression("(15 * 7) + (22 / 2)")
 ```
 
 ## Agent Types and Reasoning Modes
 
-The system supports various specialized reasoning modes, each implemented as a distinct agent type:
+The system supports multiple specialized reasoning modes, each implemented as a distinct agent type:
 
-| Agent Type | Description | Best For |
-|------------|-------------|----------|
-| 🧠 Sequential | Step-by-step analytical thinking | Complex problems, detailed analysis |
-| 🔍 RAG | Retrieval-Augmented Generation | Information seeking, fact-based queries |
-| 💬 Conversational | Natural, friendly dialogue | Casual chat, simple exchanges |
-| 📚 Knowledge | Detailed educational content | Learning, concept explanation |
-| ✅ Verification | Fact-checking and validation | Claims evaluation, truth assessment |
-| 🎨 Creative | Imaginative content generation | Stories, art, creative writing |
-| 🔢 Calculation | Mathematical operations | Computations, numerical analysis |
-| 📋 Planning | Structured strategy development | Project plans, task organization |
-| 🕸️ Graph | Relationship mapping | Concept networks, interconnections |
-| 👥 Multi-Agent | Multiple perspectives | Balanced viewpoints, debates |
-| 🔎 Step-Back | Big-picture perspective | Holistic analysis, context understanding |
-| ⛓️ Chain-of-Thought | Logical progression | Deductive reasoning, cause-effect |
-| 🔄 ReAct | Reasoning with actions | Tool usage, action-based problem solving |
+| Agent Type | Emoji | Description | Best For |
+|------------|-------|-------------|----------|
+| Sequential | 🔄 | Step-by-step analytical thinking | Complex problems, detailed analysis |
+| RAG | 📚 | Retrieval-Augmented Generation | Information seeking, fact-based queries |
+| Conversational | 💬 | Natural, friendly dialogue | Casual chat, simple exchanges |
+| Knowledge | 📚 | Detailed educational content | Learning, concept explanation |
+| Verification | ✅ | Fact-checking and validation | Claims evaluation, truth assessment |
+| Creative | 🎨 | Imaginative content generation | Stories, art, creative writing |
+| Calculation | 🧮 | Mathematical operations | Computations, numerical analysis |
+| Planning | 📋 | Structured strategy development | Project plans, task organization |
+| Graph | 📊 | Relationship mapping | Concept networks, interconnections |
+| Multi-Agent | 👥 | Multiple perspectives | Balanced viewpoints, debates |
 
-## How It Works
+## Reasoning Mode Selection
+
+The system implements a **mode-selection logic** that maps user intent and context to one or more reasoning modes:
+
+1. **Pattern Detection**: The system analyzes the query for specific patterns that indicate reasoning types
+2. **Task Classification**: LLM-based classification labels queries (e.g., "fact-check," "generate story," "compute answer")
+3. **Context Cues**: Keywords or conversation context trigger specific modes (e.g., "Write a poem" → creative mode)
+4. **Dynamic Chaining**: Agents can hand off to other agents when needed (e.g., RAG → verification for fact-checking)
+5. **Combination Detection**: Some queries benefit from multiple reasoning types working together
+
+## Multi-Agent Workflow
 
 ### Query Processing Flow
 
-1. **Query Analysis**: The orchestrator analyzes the user query to determine the required reasoning type
-2. **Agent Selection**: The appropriate agent is selected or created based on reasoning type
+1. **Query Analysis**: The orchestrator analyzes the user query to determine required reasoning type(s)
+2. **Agent Selection**: Appropriate agent(s) are selected based on reasoning types
 3. **Context Preparation**: Relevant memory and context are gathered for the agent
-4. **Task Processing**: The agent processes the task, potentially using tools or delegating subtasks
-5. **Response Generation**: The agent generates a response, which may include reasoning steps
-6. **Memory Update**: Conversation history and agent memory are updated
+4. **Task Processing**: Agent processes the task, potentially using tools or delegating subtasks
+5. **Response Generation**: Agent generates a response, which may include reasoning steps
+6. **Emoji Reaction**: The bot adds emoji reactions indicating which reasoning types were used
+7. **Memory Update**: Conversation history and agent memory are updated
 
-### Agent Delegation Flow
+### Workflow Mode (Advanced)
 
-When an agent encounters a subtask better suited for another specialist:
+For complex queries, the system can use a graph-based workflow:
 
-1. **Delegation Decision**: Agent determines another agent type would be better
-2. **Command Creation**: Agent creates a delegation command with task description
-3. **Orchestrator Handling**: Orchestrator receives command and routes to target agent
-4. **Subtask Processing**: Target agent processes the subtask
-5. **Result Integration**: Original agent receives result and incorporates it
-6. **Final Response**: Complete response with integrated specialist knowledge
+1. **Graph Creation**: A directed graph of reasoning steps is created
+2. **Node Execution**: Each node (agent or reasoning step) is executed in sequence
+3. **State Management**: Information is passed between nodes via a shared state
+4. **Conditional Routing**: Different paths can be taken based on intermediate results
+5. **Terminal Nodes**: Final nodes generate the response to the user
 
-### Symbolic Reasoning Integration
+## Passing Data Between Agents
 
-For tasks requiring deterministic reasoning:
+Agents share data via an **internal state/memory** or via explicit **handoffs**:
 
-1. **Pattern Detection**: System identifies mathematical or logical patterns
-2. **Symbolic Handler**: Task is routed to appropriate symbolic reasoning function
-3. **Deterministic Processing**: Task is solved using rule-based algorithms
-4. **Step Documentation**: Each reasoning step is documented
-5. **Result Integration**: Results are formatted for user presentation
+* **Shared Memory**: All agents can access the conversation history and user preferences
+* **Agent Scratchpads**: Each agent has its own working memory for intermediate results
+* **Command Protocol**: Agents communicate using structured commands with clear intent
+* **Tool Results**: Results from tool usage are shared between agents
+
+## Hybrid Symbolic & Neural Methods
+
+The system combines LLMs with deterministic components:
+
+1. **Retrieval-Augmented Generation (RAG)**: Queries are augmented with retrieved information
+2. **Symbolic Reasoning Engine**: Mathematical operations use a deterministic solver
+3. **Tool Integration**: Specialized tools like calculators, search, and code execution
+4. **Verification Methods**: Fact-checking mechanisms to validate information
+
+## Service Architecture Integration
+
+The multi-agent system is implemented using a service-oriented architecture:
+
+1. **Agent Service**: Central interface for agent coordination
+2. **Memory Service**: Handles all memory operations
+3. **Message Service**: Formats and processes Discord messages
+4. **Workflow Service**: Creates and manages reasoning workflows
+5. **Symbolic Reasoning Service**: Handles deterministic reasoning
+
+All services are accessed through singleton instances to ensure consistent state:
+
+```python
+# Service imports
+from bot_utilities.services.agent_service import agent_service
+from bot_utilities.services.memory_service import memory_service
+from bot_utilities.services.message_service import message_service
+from bot_utilities.services.workflow_service import workflow_service
+from bot_utilities.services.symbolic_reasoning_service import symbolic_reasoning_service
+```
+
+## EmojiReactionCog Integration
+
+The bot uses the EmojiReactionCog to provide visual feedback about reasoning types:
+
+1. Detects the reasoning types used in a response
+2. Adds appropriate emoji reactions to messages
+3. Updates reactions when reasoning types change during processing
+4. Supports multiple reasoning types on a single message
+
+```python
+# Example emoji mapping
+emoji_map = {
+    "sequential": "🔄",
+    "rag": "📚",
+    "conversational": "💬",
+    "verification": "✅",
+    "creative": "🎨",
+    "calculation": "🧮",
+    "graph": "📊",
+    "multi_agent": "👥",
+    "planning": "📋"
+}
+```
+
+## Best Practices
+
+1. **Specialized Agents**: Keep agents specialized - they should excel at one type of reasoning
+2. **Clear Delegation**: Use explicit delegation patterns when crossing domains
+3. **Shared Context**: Ensure critical context is passed between agents
+4. **Symbolic Verification**: Use symbolic reasoning to verify numerical or logical outputs
+5. **Emoji Indications**: Use emoji reactions to indicate reasoning types for transparency
 
 ## Agent Communication Protocol
 
@@ -188,19 +250,6 @@ Agents communicate using structured `AgentCommand` objects with these command ty
 - `PLAN`: Strategic planning step
 - `MERGE`: Combine multiple outputs
 - `ERROR`: Error notification
-
-Example command structure:
-```python
-{
-    "command_type": "DELEGATE",
-    "content": "What are the key factors in climate change?",
-    "target_agent": "knowledge",
-    "metadata": {
-        "origin_agent": "sequential",
-        "reason": "Need detailed factual knowledge"
-    }
-}
-```
 
 ## Extending the Architecture
 
@@ -225,73 +274,7 @@ To add a new tool:
 
 To define a new workflow:
 
-1. Use `AgentWorkflowManager` to define nodes (agents)
+1. Use `WorkflowService` to define nodes (agents)
 2. Define edges with conditional functions
 3. Set up state management for information passing
-4. Register the workflow with the orchestrator
-
-## Best Practices
-
-1. **Specialized Agents**: Keep agents specialized - they should excel at one type of reasoning
-2. **Clear Delegation**: Use explicit delegation patterns when crossing domains
-3. **Shared Context**: Ensure critical context is passed between agents
-4. **Symbolic Verification**: Use symbolic reasoning to verify numerical or logical outputs
-5. **Fallback Mechanisms**: Always implement fallbacks for when primary approaches fail
-
-## Architecture Diagram
-
-```
-User Query
-   │
-   ▼
-┌─────────────────┐
-│                 │
-│  ORCHESTRATOR   │◄───────┐
-│                 │        │
-└────────┬────────┘        │
-         │                 │
-         ▼                 │
-┌─────────────────┐        │
-│  REASONING      │        │
-│  DETECTOR       │        │
-└────────┬────────┘        │
-         │                 │
-         ▼                 │
-┌─────────────────┐        │
-│                 │        │
-│  PRIMARY AGENT  │        │ Delegation
-│                 │        │
-└────┬─────┬──────┘        │
-     │     │               │
-     │     ▼               │
-     │  ┌──────────────┐   │
-     │  │ SPECIALIZED  │   │
-     │  │ AGENT        ├───┘
-     │  └──────────────┘
-     │
-     ▼
-┌─────────────────┐    ┌──────────────┐
-│                 │    │              │
-│  TOOLS MANAGER  │◄───┤ MEMORY       │
-│                 │    │ MANAGER      │
-└────┬─────┬──────┘    └──────────────┘
-     │     │
-     │     ▼
-     │  ┌──────────────┐
-     │  │ SYMBOLIC     │
-     │  │ REASONING    │
-     │  └──────────────┘
-     ▼
-┌─────────────────┐
-│                 │
-│  RESPONSE       │
-│                 │
-└─────────────────┘
-```
-
-## Resources
-
-- [LangGraph Documentation](https://github.com/langchain-ai/langgraph)
-- [Discord.py Documentation](https://discordpy.readthedocs.io/en/stable/)
-- [Agent Patterns in LangChain](https://python.langchain.com/docs/expression_language/cookbook/agent)
-- [Symbolic AI Overview](https://en.wikipedia.org/wiki/Symbolic_artificial_intelligence) 
+4. Register the workflow with the orchestrator 

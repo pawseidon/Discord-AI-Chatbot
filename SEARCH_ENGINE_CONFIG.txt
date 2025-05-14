@@ -1,0 +1,5 @@
+# Add this line to your .env file
+SERPER_API_KEY=YOUR_API_KEY_HERE
+
+# Then restart your bot with
+# python main.py

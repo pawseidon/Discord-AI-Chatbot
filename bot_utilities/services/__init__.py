@@ -15,6 +15,7 @@ from . import memory_service
 from . import message_service
 from . import workflow_service
 from . import symbolic_reasoning_service
+from . import sequential_thinking_service
 
 # Define getter functions for lazy loading
 def get_agent_service():
@@ -41,6 +42,10 @@ def get_symbolic_reasoning_service():
     """Get the symbolic reasoning service instance"""
     return symbolic_reasoning_service.symbolic_reasoning_service
 
+def get_sequential_thinking_service():
+    """Get the sequential thinking service instance"""
+    return sequential_thinking_service.sequential_thinking_service
+
 __all__ = [
     'agent_service',
     'intent_detection',
@@ -48,10 +53,12 @@ __all__ = [
     'message_service',
     'workflow_service',
     'symbolic_reasoning_service',
+    'sequential_thinking_service',
     'get_agent_service',
     'get_intent_service',
     'get_memory_service',
     'get_message_service',
     'get_workflow_service',
-    'get_symbolic_reasoning_service'
+    'get_symbolic_reasoning_service',
+    'get_sequential_thinking_service'
 ] 

@@ -49,6 +49,9 @@ class OnMessage(commands.Cog):
         self.thread_contexts = {}  # Store parent message context for threads
         self.STREAM_UPDATE_INTERVAL = 0.5  # Update streaming messages every 0.5 seconds
         self.replied_messages = {}  # Store message IDs for reference
+        self.processed_messages = set()  # Track messages that have been processed
+        self.currently_processing = set()  # Track messages currently being processing
+        self.last_reasoning_type = {}  # Store last reasoning type per conversation
         
         # Initialize services
         self.bot.loop.create_task(self.initialize_services())
@@ -63,125 +66,308 @@ class OnMessage(commands.Cog):
 
     async def process_message(self, message):
         """Process an incoming message and generate a response"""
-        # Get clean content without bot mentions
-        content = message.clean_content
-        message_content = await message_service.smart_mention(content, message, self.bot)
-        
-        # Check for privacy command first
-        privacy_commands = ["clear my data", "forget me", "delete my data", "reset my history", "forget our conversation", "clear my history"]
-        if any(cmd in message_content.lower() for cmd in privacy_commands):
-            return await self.handle_privacy_command(message)
-        
-        # Check for specific intents
-        intent_data = await intent_service.detect_intent(message_content, message)
-        if intent_data:
-            intent_type = intent_data.get("intent")
+        try:
+            # Get clean content without bot mentions
+            content = message.clean_content
+            message_content = await message_service.smart_mention(content, message, self.bot)
             
-            if intent_type == "web_search":
-                return await self.handle_web_search(message, intent_data.get("query"))
-                
-            elif intent_type == "sequential_thinking":
-                return await self.handle_sequential_thinking(message, intent_data.get("problem"))
-                
-            elif intent_type == "multi_agent":
-                return await self.handle_multi_agent(message, intent_data.get("query"))
-                
-            elif intent_type == "symbolic_reasoning":
-                return await self.handle_symbolic_reasoning(message, intent_data.get("expression"))
-                
-            elif intent_type == "privacy":
+            # Check for empty content
+            if not message_content.strip():
+                await message.reply("How can I help you?")
+                return
+            
+            # Check for privacy command first
+            privacy_commands = ["clear my data", "forget me", "delete my data", "reset my history", "forget our conversation", "clear my history"]
+            if any(cmd in message_content.lower() for cmd in privacy_commands):
                 return await self.handle_privacy_command(message)
+            
+            # Check for reasoning-related commands
+            if await self.handle_reasoning_commands(message, message_content):
+                return True
+            
+            # Check for specific intents
+            intent_data = await intent_service.detect_intent(message_content, message)
+            if intent_data:
+                intent_type = intent_data.get("intent")
                 
-            elif intent_type == "chat":
-                # Standard AI chat interaction
-                try:
-                    # Check if we should stream the response
-                    stream = config.get('STREAM_RESPONSES', False)
+                if intent_type == "web_search":
+                    return await self.handle_web_search(message, intent_data.get("query"))
                     
-                    # Show typing indicator while generating response
-                    async with message.channel.typing():
-                        # Detect reasoning types
-                        reasoning_types = await agent_service.detect_multiple_reasoning_types(
-                            query=message_content,
-                            conversation_id=f"{message.guild.id if message.guild else 'DM'}:{message.channel.id}"
-                        )
-                        
-                        # Check if we should combine reasoning types
-                        should_combine = await agent_service.should_combine_reasoning(
-                            query=message_content,
-                            conversation_id=f"{message.guild.id if message.guild else 'DM'}:{message.channel.id}"
-                        )
-                        
-                        # Send initial reply with appropriate reasoning type emoji
-                        initial_message = await message.reply("🧠 Processing your request...")
-                        
-                        # Add initial emoji reactions for reasoning types
-                        emoji_reaction_cog = self.bot.get_cog('EmojiReactionCog')
-                        if emoji_reaction_cog:
-                            if should_combine:
-                                await emoji_reaction_cog.add_reasoning_reactions(initial_message, reasoning_types[:2])
-                            else:
-                                await emoji_reaction_cog.add_reasoning_reactions(initial_message, [reasoning_types[0]])
-                        
-                        # Call the agent service to generate a response
-                        # Set up a callback for streaming updates
-                        async def update_callback(status: str, metadata: Dict[str, Any]):
-                            if status == "thinking":
-                                thinking = metadata.get("thinking", "")
-                                if thinking:
-                                    await initial_message.edit(content=f"🧠 **Processing your request...**\n\n{thinking[:1500]}...")
-                            elif status == "agent_switch":
-                                agent_type = metadata.get("agent_type", "")
-                                emoji, _ = await agent_service.get_agent_emoji_and_description(agent_type)
-                                await initial_message.edit(content=f"{emoji} **Using {agent_type.capitalize()} Agent**\n\nWorking on your request...")
+                elif intent_type == "sequential_thinking":
+                    return await self.handle_sequential_thinking(message, intent_data.get("problem"))
+                    
+                elif intent_type == "multi_agent":
+                    return await self.handle_multi_agent(message, intent_data.get("query"))
+                    
+                elif intent_type == "symbolic_reasoning":
+                    return await self.handle_symbolic_reasoning(message, intent_data.get("expression"))
+                    
+                elif intent_type == "privacy":
+                    return await self.handle_privacy_command(message)
+            
+            # Standard AI chat interaction
+            # Check if we should stream the response
+            stream = config.get('STREAM_RESPONSES', False)
+            
+            # Show typing indicator while generating response
+            async with message.channel.typing():
+                # Detect reasoning types
+                reasoning_types = await agent_service.detect_multiple_reasoning_types(
+                    query=message_content,
+                    conversation_id=f"{message.guild.id if message.guild else 'DM'}:{message.channel.id}"
+                )
+                
+                # Check if we should combine reasoning types
+                should_combine = await agent_service.should_combine_reasoning(
+                    query=message_content,
+                    conversation_id=f"{message.guild.id if message.guild else 'DM'}:{message.channel.id}"
+                )
+                
+                # Send initial reply with appropriate reasoning type emoji
+                initial_message = await message.reply("🧠 Processing your request...")
+                
+                # Add initial emoji reactions for reasoning types
+                emoji_reaction_cog = self.bot.get_cog('EmojiReactionCog')
+                if emoji_reaction_cog:
+                    if should_combine:
+                        await emoji_reaction_cog.add_reasoning_reactions(initial_message, reasoning_types[:2])
+                    else:
+                        await emoji_reaction_cog.add_reasoning_reactions(initial_message, [reasoning_types[0]])
+                
+                # Set up a callback for streaming updates
+                async def update_callback(status: str, metadata: Dict[str, Any]):
+                    if status == "thinking":
+                        # Don't show detailed thinking process to users
+                        await initial_message.edit(content=f"🧠 **Processing your request...**")
+                    elif status == "agent_switch":
+                        agent_type = metadata.get("agent_type", "")
+                        emoji, _ = await agent_service.get_agent_emoji_and_description(agent_type)
+                        try:
+                            await initial_message.edit(content=f"{emoji} **Working on your request...**")
+                            
+                            # Update emoji reactions when the agent type changes
+                            if emoji_reaction_cog:
+                                await emoji_reaction_cog.update_reasoning_reactions(initial_message, [agent_type])
+                        except discord.HTTPException as e:
+                            logger.warning(f"Error updating message during agent switch: {str(e)}")
+                    elif status == "tool_use":
+                        tool_name = metadata.get("tool_name", "")
+                        try:
+                            await initial_message.edit(content=f"🔧 **Gathering information...**")
+                        except discord.HTTPException as e:
+                            logger.warning(f"Error updating message during tool use: {str(e)}")
+                    elif status == "reasoning_switch":
+                        reasoning_types = metadata.get("reasoning_types", [])
+                        is_combined = metadata.get("is_combined", False)
+                        if reasoning_types and emoji_reaction_cog:
+                            try:
+                                await emoji_reaction_cog.update_reasoning_reactions(
+                                    initial_message, 
+                                    reasoning_types[:2] if is_combined else [reasoning_types[0]]
+                                )
                                 
-                                # Update emoji reactions when the agent type changes
-                                if emoji_reaction_cog:
-                                    await emoji_reaction_cog.update_reasoning_reactions(initial_message, [agent_type])
-                            elif status == "tool_use":
-                                tool_name = metadata.get("tool_name", "")
-                                await initial_message.edit(content=f"🔧 **Using tool: {tool_name}**\n\nGathering information...")
-                            elif status == "reasoning_switch":
-                                reasoning_types = metadata.get("reasoning_types", [])
-                                is_combined = metadata.get("is_combined", False)
-                                if reasoning_types and emoji_reaction_cog:
-                                    await emoji_reaction_cog.update_reasoning_reactions(
-                                        initial_message, 
-                                        reasoning_types[:2] if is_combined else [reasoning_types[0]]
-                                    )
+                                # Show simple operational status
+                                await initial_message.edit(content=f"🧠 **Processing your request...**")
+                            except discord.HTTPException as e:
+                                logger.warning(f"Error updating reasoning reactions: {str(e)}")
+                    elif status == "update":
+                        # Only show updates for final content, not intermediate steps
+                        pass
+                
+                try:
+                    # Process the query with the detected reasoning
+                    response = await agent_service.process_query(
+                        query=message_content,
+                        user_id=str(message.author.id),
+                        conversation_id=f"{message.guild.id if message.guild else 'DM'}:{message.channel.id}",
+                        reasoning_type=reasoning_types[0] if reasoning_types else "conversational",
+                        update_callback=update_callback
+                    )
+                    
+                    # Validate response
+                    if not response or response.strip() == "":
+                        logger.warning("Empty response received from agent")
+                        response = "I encountered an issue generating a response. Please try asking your question again."
+                    
+                    # Format response with emoji
+                    formatted_response, _ = await agent_service.format_with_agent_emoji(
+                        response, 
+                        reasoning_types[0] if reasoning_types else "conversational"
+                    )
+                    
+                    # Ensure the response is properly formatted and not too long
+                    if len(formatted_response) > 2000:
+                        # Get message chunks using the service
+                        chunks = await message_service.split_message(formatted_response)
                         
-                        # Process the query with the detected reasoning
-                        response = await agent_service.process_query(
-                            query=message_content,
-                            user_id=str(message.author.id),
-                            conversation_id=f"{message.guild.id if message.guild else 'DM'}:{message.channel.id}",
-                            reasoning_type=reasoning_types[0] if reasoning_types else "conversational",
-                            update_callback=update_callback
-                        )
+                        # Update the initial message with the first chunk
+                        await initial_message.edit(content=chunks[0])
                         
-                        # Format response with emoji
-                        formatted_response, _ = await agent_service.format_with_agent_emoji(
-                            response, 
-                            reasoning_types[0] if reasoning_types else "conversational"
-                        )
-                        
-                        # Edit the initial message with the final response
+                        # Send additional chunks as new messages
+                        for chunk in chunks[1:]:
+                            await message.channel.send(chunk)
+                    else:
+                        # Send as a single message
                         await initial_message.edit(content=formatted_response)
-                        
-                        # Update emoji reactions for the final message
-                        if emoji_reaction_cog:
-                            if should_combine:
-                                await emoji_reaction_cog.update_reasoning_reactions(initial_message, reasoning_types[:2])
-                            else:
-                                await emoji_reaction_cog.update_reasoning_reactions(initial_message, [reasoning_types[0]])
-                        
+                
                 except Exception as e:
-                    error_traceback = traceback.format_exc()
-                    logger.error(f"Error in process_message standard AI chat: {error_traceback}")
-                    await message.channel.send(f"I encountered an error while processing your message: {str(e)[:1500]}")
+                    logger.error(f"Error processing query: {str(e)}\n{traceback.format_exc()}")
+                    await initial_message.edit(content=f"⚠️ I encountered an error while processing your request: {str(e)[:100]}...\n\nPlease try again or contact the bot administrator if the issue persists.")
+        
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            logger.error(f"Error in process_message: {error_traceback}")
+            try:
+                await message.channel.send(f"❌ I encountered an error while processing your message: {str(e)[:1500]}")
+            except:
+                pass
         
         # No specific intent detected or intent was not handled
         return None
+        
+    async def handle_reasoning_commands(self, message, content):
+        """Handle natural language commands related to reasoning modes"""
+        guild_id = str(message.guild.id) if message.guild else "DM"
+        user_id = str(message.author.id)
+        conversation_id = f"{guild_id}:{message.channel.id}"
+        
+        # Check for reasoning preference commands
+        preference_keywords = [
+            "set my reasoning mode", "change reasoning mode", "use reasoning mode",
+            "prefer reasoning", "set reasoning preference", "change my reasoning"
+        ]
+        
+        # Check for reasoning info requests
+        info_keywords = [
+            "explain reasoning modes", "reasoning modes info", "how do reasoning modes work",
+            "tell me about reasoning", "what reasoning modes", "reasoning types"
+        ]
+        
+        # Check for workflow mode toggle
+        workflow_keywords = [
+            "use workflow mode", "enable langgraph", "use graph workflow", 
+            "disable workflow mode", "toggle workflow"
+        ]
+        
+        # Check for reset conversation requests
+        reset_conv_keywords = [
+            "reset conversation", "reset our chat", "start fresh", "new conversation",
+            "restart chat", "clear conversation", "forget this conversation", 
+            "start over", "reset our conversation", "begin again", "clean slate"
+        ]
+        
+        # Process reset conversation request
+        for keyword in reset_conv_keywords:
+            if keyword.lower() in content.lower():
+                await self.reset_current_conversation(message, conversation_id)
+                return True
+        
+        # Process workflow mode toggle
+        for keyword in workflow_keywords:
+            if keyword.lower() in content.lower():
+                if "disable" in keyword.lower() or "off" in content.lower():
+                    await memory_service.set_user_preference(user_id, "use_workflow_mode", False)
+                    await message.reply("📊 Workflow mode is now disabled. I'll use the standard orchestrator for reasoning.")
+                    return True
+                else:
+                    try:
+                        # Check if LangGraph is available
+                        from langgraph.graph import StateGraph
+                        await memory_service.set_user_preference(user_id, "use_workflow_mode", True)
+                        await message.reply("📊 Workflow mode is now enabled. I'll use LangGraph for more advanced reasoning flows.")
+                        return True
+                    except ImportError:
+                        await message.reply("📊 Workflow mode requires LangGraph to be installed. Please install it with `pip install langgraph`.")
+                        return True
+        
+        # Process reasoning preference request
+        for keyword in preference_keywords:
+            if keyword.lower() in content.lower():
+                # Get reasoning type from content
+                reasoning_type = None
+                reasoning_types = [
+                    "sequential", "rag", "conversational", "knowledge", "verification", 
+                    "creative", "calculation", "planning", "graph", "multi_agent",
+                    "step_back", "cot", "react"
+                ]
+                
+                for rtype in reasoning_types:
+                    if rtype.lower() in content.lower():
+                            reasoning_type = rtype
+                            break
+                
+                if reasoning_type:
+                    # Save the preference
+                    await memory_service.set_user_preference(user_id, "default_reasoning", reasoning_type)
+                    
+                    # Get the emoji for the reasoning type
+                    emoji, _ = await agent_service.get_agent_emoji_and_description(reasoning_type)
+                    
+                    # Confirm to the user
+                    await message.reply(f"{emoji} I've set your default reasoning mode to **{reasoning_type}**. I'll use this mode unless you specify otherwise.")
+                    return True
+                else:
+                    # No specific reasoning type found
+                    await message.reply("Please specify a valid reasoning mode (sequential, rag, conversational, etc.)")
+                    return True
+        
+        # Process reasoning info request
+        for keyword in info_keywords:
+            if keyword.lower() in content.lower():
+                await self.send_reasoning_info(message)
+                return True
+        
+        return False
+    
+    async def send_reasoning_info(self, message):
+        """Send information about available reasoning modes"""
+        reasoning_types = [
+            "sequential", "rag", "conversational", "knowledge", "verification", 
+            "creative", "calculation", "planning", "graph", "multi_agent",
+            "step_back", "cot", "react"
+        ]
+        
+        # Create an embed with information about reasoning modes
+        embed = discord.Embed(
+            title="AI Reasoning Modes",
+            description="I can use different reasoning modes to approach different types of questions. Here are the available modes:",
+            color=discord.Color.blue()
+        )
+        
+        # Add fields for each reasoning type
+        for reasoning_type in reasoning_types:
+            emoji, description = await agent_service.get_agent_emoji_and_description(reasoning_type)
+            embed.add_field(
+                name=f"{emoji} {reasoning_type.capitalize()}",
+                value=description,
+                inline=False
+            )
+        
+        # Add a footer with instructions
+        embed.set_footer(text="You can set your default reasoning mode with 'set my reasoning mode to [mode]'")
+        
+        # Send the embed
+        await message.reply(embed=embed)
+    
+    async def reset_current_conversation(self, message, conversation_id: str):
+        """Reset the current conversation"""
+        try:
+            # Reset conversation in memory service
+            await memory_service.reset_conversation(conversation_id)
+            
+            # Reset conversation in agent service
+            await agent_service.reset_conversation(conversation_id)
+            
+            # Reset local tracking
+            if conversation_id in self.last_reasoning_type:
+                del self.last_reasoning_type[conversation_id]
+            
+            # Let the user know it's done
+            await message.reply("✅ I've reset our conversation. Let's start fresh!")
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            logger.error(f"Error resetting conversation: {error_traceback}")
+            await message.reply(f"❌ I encountered an error while resetting our conversation: {str(e)[:1500]}")
 
     async def handle_web_search(self, message, query):
         """Handle web search intent"""
@@ -203,18 +389,92 @@ class OnMessage(commands.Cog):
                 search_result = await agent_service.search_web(query)
                 
                 if search_result:
-                    # Create an embed for the response
-                    embed = discord.Embed(
-                        title=f"Search Results: {query}",
-                        description=search_result[:4000],  # Limit to fit in embed
-                        color=discord.Color.blue()
-                    )
+                    # Get the user and conversation IDs
+                    user_id = str(message.author.id)
+                    guild_id = str(message.guild.id) if message.guild else "DM"
+                    conversation_id = f"{guild_id}:{message.channel.id}"
                     
-                    # Send the search results
-                    await processing_message.edit(content=None, embed=embed)
+                    # Check if the query seems to request analysis, synthesis, or step-by-step processing
+                    needs_processing = any(term in query.lower() for term in [
+                        "analyze", "breakdown", "explain", "research", "review", "compare", 
+                        "step by step", "in detail", "pros and cons", "advantages", "disadvantages",
+                        "summarize", "evaluate", "assess", "study", "examine"
+                    ])
+                    
+                    if needs_processing:
+                        # Update the message to indicate we're analyzing the data
+                        await processing_message.edit(content="🔎 Found relevant information. Now analyzing and synthesizing into a comprehensive response...")
+                        
+                        # Add sequential thinking emoji reaction
+                        if emoji_reaction_cog:
+                            await emoji_reaction_cog.add_reasoning_reactions(processing_message, ["sequential"])
+                        
+                        # Use workflow service to process with sequential_rag workflow
+                        from bot_utilities.services.workflow_service import workflow_service
+                        
+                        # Set up context with search results
+                        context = {
+                            "user_id": user_id,
+                            "conversation_id": conversation_id,
+                            "retrieved_information": search_result
+                        }
+                        
+                        # Define an update callback for streaming process updates
+                        async def update_callback(status: str, metadata: Dict[str, Any]):
+                            if status == "thinking":
+                                thinking = metadata.get("thinking", "")
+                                await processing_message.edit(content=f"🧠 **Processing**: {thinking}")
+                            elif status == "reasoning_switch":
+                                reasoning_types = metadata.get("reasoning_types", [])
+                                is_combined = metadata.get("is_combined", False)
+                                emoji_list = []
+                                for rtype in reasoning_types:
+                                    emoji, _ = await agent_service.get_agent_emoji_and_description(rtype)
+                                    emoji_list.append(emoji)
+                                
+                                emojis = " + ".join(emoji_list)
+                                await processing_message.edit(content=f"{emojis} **Using {' + '.join(reasoning_types)} reasoning**\n\nAnalyzing web search results...")
+                                
+                                # Update emoji reactions
+                                if emoji_reaction_cog:
+                                    await emoji_reaction_cog.add_reasoning_reactions(processing_message, reasoning_types)
+                        
+                        # Process with sequential_rag workflow
+                        analysis_result = await workflow_service.process_with_workflow(
+                            query=query,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            workflow_type="sequential_rag",
+                            update_callback=update_callback
+                        )
+                        
+                        # Update the message with the final analysis
+                        if len(analysis_result) > 2000:
+                            # Split long message into chunks of 2000 characters
+                            chunks = [analysis_result[i:i+2000] for i in range(0, len(analysis_result), 2000)]
+                            
+                            # Send first chunk by editing the original message
+                            await processing_message.edit(content=chunks[0])
+                            
+                            # Send remaining chunks as new messages
+                            for chunk in chunks[1:]:
+                                await message.channel.send(content=chunk)
+                        else:
+                            await processing_message.edit(content=analysis_result)
+                    else:
+                        # Just display search results without further processing
+                        # Create an embed for the response
+                        embed = discord.Embed(
+                            title=f"Search Results: {query}",
+                            description=search_result[:4000],  # Limit to fit in embed (4000 chars max)
+                            color=discord.Color.blue()
+                        )
+                        
+                        # Send the search results
+                        await processing_message.edit(content=None, embed=embed)
                 else:
                     await processing_message.edit(content=f"❌ No search results found for: {query}")
-                
+            
             except Exception as e:
                 error_traceback = traceback.format_exc()
                 logger.error(f"Error in handle_web_search: {error_traceback}")
@@ -235,12 +495,27 @@ class OnMessage(commands.Cog):
             await emoji_reaction_cog.add_reasoning_reactions(initial_message, ["sequential"])
         
         try:
+            # Import sequential thinking service
+            from bot_utilities.services.sequential_thinking_service import sequential_thinking_service
+            
+            # Get user ID and context
+            user_id = str(message.author.id)
+            guild_id = str(message.guild.id) if message.guild else "DM"
+            conversation_id = f"{guild_id}:{message.channel.id}"
+            
+            # Prepare context with user info
+            context = {
+                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "channel_id": str(message.channel.id),
+                "guild_id": guild_id
+            }
+            
             # Set up a callback for streaming updates
             async def update_callback(status: str, metadata: Dict[str, Any]):
                 if status == "thinking":
-                    thinking = metadata.get("thinking", "")
-                    if thinking:
-                        await initial_message.edit(content=f"🧠 **Sequential Analysis**\n\n{thinking[:1500]}...")
+                    # Don't show detailed thinking process to users
+                    await initial_message.edit(content=f"🧠 **Processing with sequential thinking...**")
                 elif status == "agent_switch":
                     agent_type = metadata.get("agent_type", "")
                     emoji, _ = await agent_service.get_agent_emoji_and_description(agent_type)
@@ -248,7 +523,7 @@ class OnMessage(commands.Cog):
                     
                     # Update emoji reactions when the agent type changes
                     if emoji_reaction_cog:
-                        await emoji_reaction_cog.update_reasoning_reactions(initial_message, [agent_type])
+                        await emoji_reaction_cog.update_reasoning_reactions(initial_message, ["sequential", agent_type])
                 elif status == "tool_use":
                     tool_name = metadata.get("tool_name", "")
                     await initial_message.edit(content=f"🔧 **Using tool: {tool_name}**\n\nGathering information...")
@@ -258,27 +533,37 @@ class OnMessage(commands.Cog):
                     if reasoning_types and emoji_reaction_cog:
                         await emoji_reaction_cog.update_reasoning_reactions(
                             initial_message, 
-                            reasoning_types[:2] if is_combined else [reasoning_types[0]]
+                            reasoning_types
                         )
             
-            # Process the query with the sequential agent
-            user_id = str(message.author.id)
-            guild_id = str(message.guild.id) if message.guild else "DM"
-            conversation_id = f"{guild_id}:{message.channel.id}"
-            
-            response = await agent_service.process_query(
-                query=problem,
-                user_id=user_id,
-                conversation_id=conversation_id,
-                reasoning_type="sequential",
-                update_callback=update_callback
+            # Process with sequential thinking service
+            success, response = await sequential_thinking_service.process_sequential_thinking(
+                problem=problem,
+                context=context,
+                prompt_style="sequential",
+                num_thoughts=5,
+                temperature=0.3,
+                enable_revision=True,
+                enable_reflection=False,
+                session_id=f"session_{user_id}_{conversation_id}"
             )
             
-            # Format the response with emoji
+            # Format the response and update it with agent emoji
             formatted_response, _ = await agent_service.format_with_agent_emoji(response, "sequential")
             
             # Update the message with the final response
-            await initial_message.edit(content=formatted_response)
+            if len(formatted_response) > 2000:
+                # Split the message into chunks
+                chunks = await message_service.split_message(formatted_response)
+                
+                # Send the first chunk by updating the initial message
+                await initial_message.edit(content=chunks[0])
+                
+                # Send remaining chunks as new messages
+                for chunk in chunks[1:]:
+                    await message.channel.send(content=chunk)
+            else:
+                await initial_message.edit(content=formatted_response)
             
         except Exception as e:
             error_traceback = traceback.format_exc()
@@ -315,7 +600,18 @@ class OnMessage(commands.Cog):
                     formatted_response += f"\n\n**Steps:**\n{steps_text}"
             
             # Update the message with the final response
-            await initial_message.edit(content=formatted_response)
+            if len(formatted_response) > 2000:
+                # Split long message into chunks
+                chunks = await message_service.split_message(formatted_response)
+                
+                # Update initial message with first chunk
+                await initial_message.edit(content=chunks[0])
+                
+                # Send remaining chunks as new messages
+                for chunk in chunks[1:]:
+                    await message.channel.send(content=chunk)
+            else:
+                await initial_message.edit(content=formatted_response)
             
         except Exception as e:
             error_traceback = traceback.format_exc()
@@ -340,9 +636,8 @@ class OnMessage(commands.Cog):
             # Set up a callback for streaming updates
             async def update_callback(status, metadata):
                 if status == "thinking":
-                    thinking = metadata.get("thinking", "")
-                    if thinking:
-                        await initial_message.edit(content=f"👥 **Multi-Agent Processing**\n\n{thinking[:1500]}...")
+                    # Don't show detailed thinking process to users
+                    await initial_message.edit(content=f"👥 **Processing with multiple agent perspectives...**")
                 elif status == "agent_switch":
                     agent_type = metadata.get("agent_type", "")
                     emoji, _ = await agent_service.get_agent_emoji_and_description(agent_type)
@@ -399,14 +694,25 @@ class OnMessage(commands.Cog):
                     "multi_agent"
                 )
             
-            # Update message with final response
-            await initial_message.edit(content=formatted_response)
-            
+            # Send the response
+            if len(formatted_response) > 2000:
+                # Split long message into chunks
+                chunks = await message_service.split_message(formatted_response)
+                
+                # Update the initial message with the first chunk
+                await initial_message.edit(content=chunks[0])
+                
+                # Send remaining chunks as new messages
+                for chunk in chunks[1:]:
+                    await message.channel.send(content=chunk)
+            else:
+                await initial_message.edit(content=formatted_response)
+                
         except Exception as e:
             error_traceback = traceback.format_exc()
             logger.error(f"Error in handle_multi_agent: {error_traceback}")
             await initial_message.edit(content=f"❌ Error in multi-agent processing: {str(e)[:1500]}")
-
+    
     async def process_streaming_response(self, initial_message, response_stream):
         """Process a streaming response from the AI"""
         try:
@@ -440,21 +746,21 @@ class OnMessage(commands.Cog):
                     accumulated_response,
                     update_existing=True
                 )
-                
+        
         except Exception as e:
             error_traceback = traceback.format_exc()
             logger.error(f"Error in process_streaming_response: {error_traceback}")
             await initial_message.channel.send(f"❌ Error while streaming response: {str(e)[:1500]}")
-
+            
     async def create_voice_response(self, text):
         """Create a voice response from text"""
         try:
             # Limit text length for voice
             text = text[:2000]
-            
+                    
             # Call the text to speech function
             audio_data = await text_to_speech(text)
-            
+                    
             if audio_data:
                 return discord.File(audio_data, filename="response.mp3")
             else:
@@ -532,13 +838,12 @@ class OnMessage(commands.Cog):
             # Define update callback for status updates
             async def update_callback(status: str, metadata: Dict[str, Any]):
                 if status == "thinking":
-                    thinking = metadata.get("thinking", "")
-                    if thinking:
-                        await initial_response.edit(content=f"🧠 **Processing your request...**\n\n{thinking[:1500]}...")
+                    # Don't show detailed thinking process to users
+                    await initial_response.edit(content=f"🧠 **Processing your request...**")
                 elif status == "agent_switch":
                     agent_type = metadata.get("agent_type", "")
                     emoji, _ = await agent_service.get_agent_emoji_and_description(agent_type)
-                    await initial_response.edit(content=f"{emoji} **Using {agent_type.capitalize()} Agent**\n\nWorking on your request...")
+                    await initial_response.edit(content=f"{emoji} **Working on your request...**")
                     
                     # Update emoji reactions when the agent type changes
                     if emoji_reaction_cog:
@@ -548,7 +853,7 @@ class OnMessage(commands.Cog):
                             await emoji_reaction_cog.update_reasoning_reactions(initial_response, [agent_type])
                 elif status == "tool_use":
                     tool_name = metadata.get("tool_name", "")
-                    await initial_response.edit(content=f"🔧 **Using tool: {tool_name}**\n\nGathering information...")
+                    await initial_response.edit(content=f"🔧 **Gathering information...**")
                 elif status == "reasoning_switch":
                     reasoning_types = metadata.get("reasoning_types", [])
                     is_combined = metadata.get("is_combined", False)
@@ -574,7 +879,18 @@ class OnMessage(commands.Cog):
             )
             
             # Send the response
-            await initial_response.edit(content=formatted_response)
+            if len(formatted_response) > 2000:
+                # Split long message into chunks
+                chunks = await message_service.split_message(formatted_response)
+                
+                # Update the initial message with the first chunk
+                await initial_response.edit(content=chunks[0])
+                
+                # Send remaining chunks as new messages
+                for chunk in chunks[1:]:
+                    await message.channel.send(content=chunk)
+            else:
+                await initial_response.edit(content=formatted_response)
             
             # Update emoji reactions for the final message
             if emoji_reaction_cog:
@@ -599,7 +915,16 @@ class OnMessage(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         """Handle incoming messages"""
+        # Skip bot messages
         if message.author.bot:
+            return
+            
+        # Check if we've already processed this message
+        if message.id in self.processed_messages:
+            return
+            
+        # Check if this message is currently being processed
+        if message.id in self.currently_processing:
             return
             
         # Check if the bot is mentioned or the message is a reply to the bot
@@ -610,18 +935,33 @@ class OnMessage(commands.Cog):
         # Process DMs, mentions, and replies
         if is_mentioned or is_reply_to_bot or is_dm:
             try:
+                # Mark this message as currently being processed
+                self.currently_processing.add(message.id)
+                
                 # Track message processing
                 logger.info(f"Processing message from {message.author.name} ({message.author.id}): {message.content[:50]}...")
                 
                 # Process the message
                 await self.process_message(message)
                 
+                # Mark message as processed after completion
+                self.processed_messages.add(message.id)
+                self.currently_processing.remove(message.id)
+                
                 # Update user's last seen time
-                await memory_service.update_user_last_seen(str(message.author.id))
+                try:
+                    await memory_service.update_user_last_seen(str(message.author.id))
+                except Exception as user_seen_err:
+                    logger.error(f"Error updating user last seen: {user_seen_err}")
+                    # Continue execution even if this fails
                 
             except Exception as e:
                 error_traceback = traceback.format_exc()
                 logger.error(f"Error in on_message: {error_traceback}")
+                
+                # Clean up processing status
+                if message.id in self.currently_processing:
+                    self.currently_processing.remove(message.id)
                 
                 try:
                     await message.channel.send(f"❌ I encountered an error: {str(e)[:1500]}")

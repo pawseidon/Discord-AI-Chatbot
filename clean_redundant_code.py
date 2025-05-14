@@ -89,7 +89,7 @@ REDUNDANCY_PATTERNS = [
 # This helps the script avoid looking for patterns in files that no longer exist
 DELETED_FILES = [
     "bot_utilities/agent_utils.py",
-    "bot_utilities/sequential_thinking.py",
+    "sequential_thinking.py",  # Moved to bot_utilities/services/sequential_thinking_service.py
     "bot_utilities/response_utils.py",
     "bot_utilities/memory_utils.py",
     "bot_utilities/agent_memory.py",
