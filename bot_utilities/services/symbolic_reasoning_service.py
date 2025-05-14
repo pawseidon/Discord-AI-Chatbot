@@ -199,10 +199,10 @@ class MathSolver(SymbolicReasoner):
             symbolic_expr = expr
             
             # Solve the equation
-            solutions = solve(symbolic_expr, sym_vars[0])
+            solutions = solve(symbolic_expr, var_dict[primary_var])
             
             if not solutions:
-                steps.append("No solutions found.")
+                steps.append(f"No solutions found for {primary_var}.")
                 return {
                     "success": True,
                     "result": "No solution",
@@ -211,12 +211,16 @@ class MathSolver(SymbolicReasoner):
                 }
                 
             # Format the solutions
-            solution_strs = [f"{primary_var} = {sol}" for sol in solutions]
-            steps.append(f"Solutions: {', '.join(solution_strs)}")
+            steps.append(f"Solutions for {primary_var}:")
+            for sol in solutions:
+                steps.append(f"  {primary_var} = {sol}")
+                
+            # Return the solutions
+            result = {primary_var: [str(sol) for sol in solutions]}
             
             return {
                 "success": True,
-                "result": solution_strs,
+                "result": result,
                 "steps": steps,
                 "error": None
             }
@@ -231,17 +235,9 @@ class MathSolver(SymbolicReasoner):
             }
             
     async def verify_logical_statement(self, statement: str) -> Dict[str, Any]:
-        """
-        Verify a logical statement
-        
-        This is not directly handled by the math solver but could be
-        implemented for certain types of mathematical statements.
-        """
-        return {
-            "success": False,
-            "result": None,
-            "error": "Logical statement verification not implemented for the math solver"
-        }
+        """Pass the request to LogicalVerifier"""
+        logical_verifier = LogicalVerifier()
+        return await logical_verifier.verify_logical_statement(statement)
 
 class LogicalVerifier(SymbolicReasoner):
     """
@@ -478,66 +474,85 @@ class GraphAnalyzer(SymbolicReasoner):
 
 class SymbolicReasoningService:
     """
-    Service that provides access to various symbolic reasoning capabilities.
+    Central service for symbolic reasoning capabilities.
+    This service provides methods for solving math problems, verifying logical statements,
+    and other symbolic reasoning tasks.
     """
     
     def __init__(self):
-        """Initialize the service"""
-        self.initialized = False
-        self.solvers = {}
-        self.graph_cache = {}
+        """Initialize the symbolic reasoning service"""
+        self.math_solver = None
+        self.logical_verifier = None
+        self.graph_analyzer = None
+        self._initialized = False
         
     async def ensure_initialized(self) -> bool:
-        """
-        Ensure the service is initialized
-        
-        Returns:
-            bool: True if initialization succeeded, False otherwise
-        """
-        if self.initialized:
-            return True
-            
-        try:
-            if HAS_SYMPY:
-                # Register standard solvers
-                self.solvers["algebra"] = self._solve_algebraic
-                self.solvers["calculus"] = self._solve_calculus
-                self.solvers["equation"] = self._solve_equation
-                self.solvers["logic"] = self._solve_logic
+        """Initialize required components if not already initialized"""
+        if not self._initialized:
+            try:
+                # Create the reasoners
+                self.math_solver = MathSolver()
+                self.logical_verifier = LogicalVerifier()
+                self.graph_analyzer = GraphAnalyzer() if HAS_NETWORKX else None
                 
-                # Register the available reasoners
-                math_solver = MathSolver()
-                symbolic_reasoning_registry.register_reasoner("math", math_solver)
+                # Register the reasoners
+                symbolic_reasoning_registry.register("math", self.math_solver)
+                symbolic_reasoning_registry.register("logic", self.logical_verifier)
                 
-                logical_verifier = LogicalVerifier()
-                symbolic_reasoning_registry.register_reasoner("logic", logical_verifier)
+                if self.graph_analyzer:
+                    symbolic_reasoning_registry.register("graph", self.graph_analyzer)
                 
-                graph_analyzer = GraphAnalyzer()
-                symbolic_reasoning_registry.register_reasoner("graph", graph_analyzer)
-                
-                self.initialized = True
-                logger.info("Symbolic reasoning service initialized")
+                self._initialized = True
+                logger.info("Symbolic reasoning service initialized successfully")
                 return True
-            else:
-                logging.warning("Symbolic reasoning service initialization failed: sympy not available")
+            except Exception as e:
+                logger.error(f"Error initializing symbolic reasoning service: {str(e)}")
                 return False
-        except Exception as e:
-            logging.error(f"Error initializing SymbolicReasoningService: {e}")
-            return False
+        return True
+        
+    async def evaluate_expression(self, expression: str) -> Dict[str, Any]:
+        """
+        Evaluate a mathematical expression or logical statement
+        
+        Args:
+            expression: The expression to evaluate
+            
+        Returns:
+            Dictionary with results including steps
+        """
+        await self.ensure_initialized()
+        
+        # Clean the expression
+        expression = expression.strip()
+        
+        # Determine if this is a mathematical or logical expression
+        is_logical = any(term in expression.lower() for term in 
+                           ["and", "or", "not", "if", "then", "implies", 
+                            "equivalent", "true", "false", "→", "∧", "∨", "¬", "↔", "⇔"])
+        
+        has_math_chars = any(char in expression for char in "+-*/^0123456789()[]{}=<>")
+        
+        if is_logical and not has_math_chars:
+            # Handle as logical expression
+            result = await self.verify_logical_statement(expression)
+            return result
+        else:
+            # Handle as mathematical expression
+            result = await self.solve_math_problem(expression)
+            return result
         
     async def solve_math_problem(self, expression: str) -> Dict[str, Any]:
         """
-        Solve a mathematical problem
+        Solve a mathematical expression or equation
         
         Args:
-            expression: The mathematical expression or equation to solve
+            expression: The math expression or equation to solve
             
         Returns:
-            Dictionary with results and steps
+            Dictionary with results including steps
         """
         await self.ensure_initialized()
-        math_solver = symbolic_reasoning_registry.get_reasoner("math")
-        return await math_solver.solve_math_problem(expression)
+        return await self.math_solver.solve_math_problem(expression)
         
     async def verify_logical_statement(self, statement: str) -> Dict[str, Any]:
         """
@@ -547,35 +562,32 @@ class SymbolicReasoningService:
             statement: The logical statement to verify
             
         Returns:
-            Dictionary with verification results
+            Dictionary with results including steps
         """
         await self.ensure_initialized()
-        logical_verifier = symbolic_reasoning_registry.get_reasoner("logic")
-        return await logical_verifier.verify_logical_statement(statement)
+        return await self.logical_verifier.verify_logical_statement(statement)
         
     async def add_logical_fact(self, fact: str, truth_value: bool = True) -> None:
         """
-        Add a fact to the logical knowledge base
+        Add a logical fact to the knowledge base
         
         Args:
             fact: The fact to add
             truth_value: Whether the fact is true or false
         """
         await self.ensure_initialized()
-        logical_verifier = symbolic_reasoning_registry.get_reasoner("logic")
-        logical_verifier.add_fact(fact, truth_value)
+        self.logical_verifier.add_fact(fact, truth_value)
         
     async def add_logical_rule(self, condition: str, conclusion: str) -> None:
         """
-        Add a rule to the logical knowledge base
+        Add a logical rule to the knowledge base
         
         Args:
             condition: The condition part of the rule
             conclusion: The conclusion part of the rule
         """
         await self.ensure_initialized()
-        logical_verifier = symbolic_reasoning_registry.get_reasoner("logic")
-        logical_verifier.add_rule(condition, conclusion)
+        self.logical_verifier.add_rule(condition, conclusion)
         
     async def create_graph(self, graph_id: str) -> None:
         """
@@ -585,382 +597,70 @@ class SymbolicReasoningService:
             graph_id: Identifier for the graph
         """
         await self.ensure_initialized()
-        graph_analyzer = symbolic_reasoning_registry.get_reasoner("graph")
-        graph_analyzer.create_graph(graph_id)
+        if not self.graph_analyzer:
+            raise ValueError("Graph analysis functionality is not available. Install networkx.")
+            
+        self.graph_analyzer.create_graph(graph_id)
         
     async def add_graph_node(self, graph_id: str, node_id: str, 
-                             properties: Dict[str, Any] = None) -> None:
+                            properties: Dict[str, Any] = None) -> None:
         """
-        Add a node to a graph
+        Add a node to an existing graph
         
         Args:
-            graph_id: Identifier for the graph
-            node_id: Identifier for the node
+            graph_id: The graph identifier
+            node_id: The node identifier
             properties: Optional node properties
         """
         await self.ensure_initialized()
-        graph_analyzer = symbolic_reasoning_registry.get_reasoner("graph")
-        graph_analyzer.add_node(graph_id, node_id, properties)
+        if not self.graph_analyzer:
+            raise ValueError("Graph analysis functionality is not available. Install networkx.")
+            
+        self.graph_analyzer.add_node(graph_id, node_id, properties)
         
     async def add_graph_edge(self, graph_id: str, from_node: str, to_node: str,
-                             relation: str = None, properties: Dict[str, Any] = None) -> None:
+                            relation: str = None, properties: Dict[str, Any] = None) -> None:
         """
-        Add an edge to a graph
+        Add an edge between nodes in a graph
         
         Args:
-            graph_id: Identifier for the graph
-            from_node: Source node
-            to_node: Target node
-            relation: Optional relation type
+            graph_id: The graph identifier
+            from_node: The source node
+            to_node: The target node
+            relation: Optional relationship type
             properties: Optional edge properties
         """
         await self.ensure_initialized()
-        graph_analyzer = symbolic_reasoning_registry.get_reasoner("graph")
-        graph_analyzer.add_edge(graph_id, from_node, to_node, relation, properties)
+        if not self.graph_analyzer:
+            raise ValueError("Graph analysis functionality is not available. Install networkx.")
+            
+        self.graph_analyzer.add_edge(graph_id, from_node, to_node, relation, properties)
         
     async def analyze_graph(self, graph_id: str, analysis_type: str) -> Dict[str, Any]:
         """
-        Analyze a graph
+        Analyze a graph using the specified analysis type
         
         Args:
-            graph_id: Identifier for the graph
-            analysis_type: Type of analysis to perform
+            graph_id: The graph identifier
+            analysis_type: The type of analysis to perform
             
         Returns:
             Dictionary with analysis results
         """
         await self.ensure_initialized()
-        graph_analyzer = symbolic_reasoning_registry.get_reasoner("graph")
-        return await graph_analyzer.analyze_graph(graph_id, analysis_type)
+        if not self.graph_analyzer:
+            raise ValueError("Graph analysis functionality is not available. Install networkx.")
+            
+        return await self.graph_analyzer.analyze_graph(graph_id, analysis_type)
         
     def get_available_reasoners(self) -> List[str]:
         """
-        Get a list of available symbolic reasoners
+        Get the list of available symbolic reasoners
         
         Returns:
-            List of reasoner names
+            List of available reasoner names
         """
-        return symbolic_reasoning_registry.list_reasoners()
+        return list(symbolic_reasoning_registry.get_all_reasoners().keys())
 
-    async def _solve_algebraic(self, problem: str) -> Tuple[str, List[str]]:
-        """Solve algebraic problems"""
-        steps = []
-        steps.append(f"Starting with the algebraic expression: {problem}")
-        
-        try:
-            # Try to parse the expression
-            expr = parse_expr(problem, transformations=standard_transformations)
-            steps.append(f"Parsed expression: {expr}")
-            
-            # Simplify the expression
-            simplified = simplify(expr)
-            if simplified != expr:
-                steps.append(f"Simplified: {simplified}")
-            
-            # Expand the expression
-            expanded = expand(simplified)
-            if expanded != simplified:
-                steps.append(f"Expanded: {expanded}")
-                
-            return str(expanded), steps
-        except Exception as e:
-            steps.append(f"Error: {str(e)}")
-            return "Could not solve algebraic problem", steps
-    
-    async def _solve_equation(self, problem: str) -> Tuple[str, List[str]]:
-        """Solve equations"""
-        steps = []
-        steps.append(f"Starting with the equation: {problem}")
-        
-        try:
-            # Check if this is directly a "solve for x" type problem
-            if "solve" in problem.lower():
-                # Extract the equation part
-                equation_match = re.search(r"solve\s+(.+?)\s+for\s+(.+)", problem, re.IGNORECASE)
-                if equation_match:
-                    equation_str = equation_match.group(1)
-                    variable_str = equation_match.group(2)
-                    steps.append(f"Extracted equation: {equation_str}")
-                    steps.append(f"Solving for variable: {variable_str}")
-                    
-                    # Check if the equation contains =
-                    if "=" in equation_str:
-                        left, right = equation_str.split("=", 1)
-                        left_expr = parse_expr(left.strip(), transformations=standard_transformations)
-                        right_expr = parse_expr(right.strip(), transformations=standard_transformations)
-                        equation = left_expr - right_expr
-                    else:
-                        # Assume it's set to 0
-                        equation = parse_expr(equation_str, transformations=standard_transformations)
-                    
-                    # Solve the equation
-                    variable = symbols(variable_str.strip())
-                    solution = solve(equation, variable)
-                    steps.append(f"Solution: {variable} = {solution}")
-                    
-                    return str(solution), steps
-            
-            # Otherwise, try to find the = sign
-            if "=" in problem:
-                left, right = problem.split("=", 1)
-                left_expr = parse_expr(left.strip(), transformations=standard_transformations)
-                right_expr = parse_expr(right.strip(), transformations=standard_transformations)
-                steps.append(f"Left side: {left_expr}")
-                steps.append(f"Right side: {right_expr}")
-                
-                # Move everything to one side
-                equation = left_expr - right_expr
-                steps.append(f"Equation in standard form: {equation} = 0")
-                
-                # Try to identify the variable
-                symbols_used = list(equation.free_symbols)
-                if len(symbols_used) == 0:
-                    # No variables, just calculate
-                    result = equation == 0
-                    steps.append(f"This is a constant equation: {result}")
-                    return str(result), steps
-                elif len(symbols_used) == 1:
-                    # One variable, solve for it
-                    variable = symbols_used[0]
-                    steps.append(f"Solving for variable: {variable}")
-                    solution = solve(equation, variable)
-                    steps.append(f"Solution: {variable} = {solution}")
-                    return str(solution), steps
-                else:
-                    # Multiple variables, we need context
-                    steps.append(f"Multiple variables found: {symbols_used}")
-                    steps.append("Assuming we should solve for the first variable")
-                    variable = symbols_used[0]
-                    solution = solve(equation, variable)
-                    steps.append(f"Solution: {variable} = {solution}")
-                    return str(solution), steps
-            
-            # If we can't identify an equation or solve directive
-            return "Could not identify equation structure", steps
-            
-        except Exception as e:
-            steps.append(f"Error: {str(e)}")
-            return "Could not solve equation", steps
-    
-    async def _solve_calculus(self, problem: str) -> Tuple[str, List[str]]:
-        """Solve calculus problems"""
-        steps = []
-        steps.append(f"Starting with the calculus problem: {problem}")
-        
-        try:
-            from sympy import Symbol, Derivative, Integral
-            
-            # Check if it's a derivative problem
-            if any(word in problem.lower() for word in ["derivative", "differentiate"]):
-                # Try to extract the function and variable
-                derivative_match = re.search(r"derivative\s+of\s+(.+?)\s+with\s+respect\s+to\s+(.+)", problem, re.IGNORECASE)
-                if not derivative_match:
-                    derivative_match = re.search(r"differentiate\s+(.+?)\s+with\s+respect\s+to\s+(.+)", problem, re.IGNORECASE)
-                
-                if derivative_match:
-                    function_str = derivative_match.group(1)
-                    variable_str = derivative_match.group(2)
-                    steps.append(f"Extracting function: {function_str}")
-                    steps.append(f"Differentiating with respect to: {variable_str}")
-                    
-                    # Parse the function and variable
-                    function = parse_expr(function_str, transformations=standard_transformations)
-                    variable = Symbol(variable_str.strip())
-                    
-                    # Compute the derivative
-                    derivative = Derivative(function, variable).doit()
-                    steps.append(f"Computed derivative: {derivative}")
-                    
-                    # Simplify the result
-                    simplified = simplify(derivative)
-                    if simplified != derivative:
-                        steps.append(f"Simplified: {simplified}")
-                        
-                    return str(simplified), steps
-            
-            # Check if it's an integral problem
-            if any(word in problem.lower() for word in ["integral", "integrate"]):
-                # Try to extract the function and variable
-                integral_match = re.search(r"integral\s+of\s+(.+?)\s+with\s+respect\s+to\s+(.+)", problem, re.IGNORECASE)
-                if not integral_match:
-                    integral_match = re.search(r"integrate\s+(.+?)\s+with\s+respect\s+to\s+(.+)", problem, re.IGNORECASE)
-                
-                if integral_match:
-                    function_str = integral_match.group(1)
-                    variable_str = integral_match.group(2)
-                    steps.append(f"Extracting function: {function_str}")
-                    steps.append(f"Integrating with respect to: {variable_str}")
-                    
-                    # Parse the function and variable
-                    function = parse_expr(function_str, transformations=standard_transformations)
-                    variable = Symbol(variable_str.strip())
-                    
-                    # Compute the integral
-                    integral = Integral(function, variable).doit()
-                    steps.append(f"Computed integral: {integral}")
-                    
-                    # Simplify the result
-                    simplified = simplify(integral)
-                    if simplified != integral:
-                        steps.append(f"Simplified: {simplified}")
-                        
-                    return str(simplified), steps
-            
-            return "Could not identify calculus problem structure", steps
-            
-        except Exception as e:
-            steps.append(f"Error: {str(e)}")
-            return "Could not solve calculus problem", steps
-    
-    async def _solve_logic(self, problem: str) -> Tuple[bool, List[str]]:
-        """Solve logical problems"""
-        # This is a simple implementation - can be expanded later
-        return await self.verify_logical_statement(problem)
-    
-    async def _solve_generic(self, problem: str) -> Tuple[str, List[str]]:
-        """Generic fallback solver"""
-        steps = []
-        steps.append(f"Analyzing problem: {problem}")
-        
-        try:
-            # Try to parse as a direct expression
-            expr = parse_expr(problem, transformations=standard_transformations)
-            steps.append(f"Parsed as mathematical expression: {expr}")
-            
-            # Simplify the expression
-            simplified = simplify(expr)
-            steps.append(f"Simplified: {simplified}")
-            
-            # Try to evaluate if it's a numerical expression
-            try:
-                evald = float(simplified)
-                steps.append(f"Evaluated to: {evald}")
-                return str(evald), steps
-            except:
-                # Not directly evaluable, return simplified form
-                return str(simplified), steps
-                
-        except Exception as e:
-            steps.append(f"Could not parse as direct expression: {str(e)}")
-            steps.append("Trying alternate approaches...")
-            
-            # Try different solvers
-            for solver_name, solver in self.solvers.items():
-                if solver_name != "generic":  # Avoid recursion
-                    steps.append(f"Trying {solver_name} solver...")
-                    try:
-                        result, solver_steps = await solver(problem)
-                        steps.extend(solver_steps)
-                        return result, steps
-                    except Exception as solver_e:
-                        steps.append(f"Solver failed: {str(solver_e)}")
-            
-            # If all solvers fail
-            return "Could not solve problem", steps
-    
-    def _normalize_logical_statement(self, statement: str) -> str:
-        """Normalize a logical statement for parsing"""
-        # Replace common text with symbols
-        replacements = {
-            "and": "&",
-            "or": "|",
-            "not": "~",
-            "implies": ">>",
-            "if and only if": "<->",
-            "iff": "<->",
-            "equivalent to": "<->",
-            "if": ">>",
-            "then": ""  # Remove "then" as it's implied by "if"
-        }
-        
-        normalized = statement.lower()
-        for word, symbol in replacements.items():
-            normalized = re.sub(r'\b' + word + r'\b', symbol, normalized)
-        
-        # Handle other replacements
-        normalized = normalized.replace("=>", ">>")
-        normalized = normalized.replace("->", ">>")
-        normalized = normalized.replace("<=>", "<->")
-        
-        return normalized
-    
-    def _parse_logical_expression(self, statement: str) -> Any:
-        """Parse a logical expression into a sympy form"""
-        from sympy.logic.boolalg import And, Or, Not, Implies, Equivalent
-        from sympy import Symbol
-        
-        # Extract variable names
-        var_names = set(re.findall(r'\b([a-zA-Z])\b', statement))
-        variables = {name: Symbol(name) for name in var_names}
-        
-        # Replace operators with Python operators that sympy can parse
-        statement = statement.replace("&", " and ")
-        statement = statement.replace("|", " or ")
-        statement = statement.replace("~", " not ")
-        statement = statement.replace(">>", " >> ")
-        statement = statement.replace("<->", " <-> ")
-        
-        # Create local namespace with variables and operators
-        namespace = {
-            "Symbol": Symbol,
-            "And": And,
-            "Or": Or,
-            "Not": Not,
-            "Implies": Implies,
-            "Equivalent": Equivalent
-        }
-        namespace.update(variables)
-        
-        # Convert operators to sympy functions
-        statement = statement.replace(" and ", " & ")
-        statement = statement.replace(" or ", " | ")
-        statement = statement.replace(" not ", "~")
-        statement = statement.replace(" >> ", " >> ")
-        statement = statement.replace(" <-> ", " <-> ")
-        
-        # Parse with a custom approach or using sympify for simple cases
-        try:
-            return sympify(statement, locals=namespace)
-        except:
-            # More complex parsing would be implemented here
-            raise ValueError(f"Could not parse logical expression: {statement}")
-    
-    async def _verify_logical(self, expr, statement: str) -> Tuple[bool, List[str]]:
-        """Verify a logical expression"""
-        from sympy.logic.boolalg import And, Or, Not, Implies, Equivalent, to_cnf, is_cnf
-        from sympy.logic.inference import satisfiable
-        
-        steps = []
-        steps.append(f"Analyzing logical statement: {statement}")
-        
-        try:
-            # Try to simplify to canonical form
-            steps.append(f"Converting to canonical form...")
-            cnf_form = to_cnf(expr)
-            steps.append(f"Canonical form: {cnf_form}")
-            
-            # Check satisfiability
-            is_sat = satisfiable(expr)
-            if is_sat:
-                steps.append(f"Statement is satisfiable with values: {is_sat}")
-                
-                # Check if it's a tautology (always true)
-                not_expr = Not(expr)
-                is_not_sat = satisfiable(not_expr)
-                if not is_not_sat:
-                    steps.append("Statement is a tautology (always true)")
-                    return True, steps
-                else:
-                    steps.append(f"Statement is not a tautology. It is false when: {is_not_sat}")
-                    # This is a contingency (sometimes true, sometimes false)
-                    return None, steps
-            else:
-                steps.append("Statement is not satisfiable (always false)")
-                return False, steps
-                
-        except Exception as e:
-            steps.append(f"Error in verification: {str(e)}")
-            return None, steps
-
-# Create a singleton instance
+# Create a singleton instance for global access
 symbolic_reasoning_service = SymbolicReasoningService() 
