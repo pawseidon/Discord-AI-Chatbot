@@ -1,0 +1,18 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+developing logical and effiicient caching logic for my bot, make sure you understand how interactions on Discord work, so you make caching proper way., also make sure the bot handles tupes properly and giving user only context the user should see. As well make sure all types of reasoning which we also have, all while respecting the Discord as UI
+
+Also the functions of the bot like all types of RAGs CRAG, ReAct Arch, Graph-of-Thought Reasoning, sequential thinking etc. etc., I need these functions to be prominent aspects, the things we are building I need them to be cross compatible and compliant with Discord's capabilities.
+
+I need agent/bot to be content aware and have proper hallucinations handling. Go through @enhancements.md and make sure you check resources, 1 by 1 or whatever you like, so you get better idea on what we have to accomplish next.
+
+Create also proper checklist.md entries for this comprehensive tasks so you don't lose your thoughts
+
+🧠🔍💬📚✅-make sure implementation and functions behind these symbols are working flawless and content aware. The functions are not just slash commands, they work seamlessly with eachother when they're needed together and parse data between eachother.
+
+
+meta-llama/llama-4-maverick-17b-128e-instruct
+

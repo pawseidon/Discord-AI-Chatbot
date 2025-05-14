@@ -29,6 +29,12 @@ from bot_utilities.sequential_thinking import create_sequential_thinking
 from bot_utilities.context_manager import get_context_manager, start_context_manager_tasks
 from ..common import message_history, replied_messages, active_channels, server_settings, smart_mention
 from bot_utilities.mcp_utils import MCPToolsManager
+from bot_utilities.router_init import get_router, router_stats
+from cogs.common import (
+    instructions, allow_dm, active_channels, 
+    smart_mention_enabled, internet_access,
+    MAX_HISTORY, replied_messages, instruc_config
+)
 
 # Get config values
 MAX_HISTORY = config.get('MAX_HISTORY', 8)
@@ -366,170 +372,190 @@ Think step-by-step and consider all available information before responding."""
 
     async def handle_message_with_reasoning_router(self, message, clean_content, username, user_id, channel_id):
         """
-        Handle message processing using the reasoning router
+        Handle a message using the reasoning router system
         
-        This handles complex routing to the appropriate reasoning method
+        Args:
+            message: Discord message
+            clean_content: Processed message content
+            username: Username of the message author
+            user_id: User ID of the message author
+            channel_id: Channel ID where the message was sent
         """
         try:
-            # Start processing indicator
-            initial_message = None
-            if SHOW_THINKING_INDICATOR:
-                try:
-                    # Use an animated emoji for the thinking indicator if possible
-                    initial_message = await message.channel.send("Thinking... <a:thinking:1174880300425388042>")
-                except:
-                    # Fallback to simple text if emoji not available
+            # Show typing indicator
+            async with message.channel.typing():
+                # Initialize thinking message if configured
+                initial_message = None
+                if SHOW_THINKING_INDICATOR:
                     try:
-                        initial_message = await message.channel.send("Thinking...")
-                    except:
-                        pass  # If we can't send the indicator, just continue
-            
-            # Get thread_id for context tracking if we're in a thread
-            thread_id = channel_id if isinstance(message.channel, discord.Thread) else None
-            
-            # Create response context
-            context_manager = get_context_manager()
-            context = {}
-            if context_manager:
-                try:
-                    context = context_manager.build_context(
-                        user_id=user_id,
-                        channel_id=channel_id,
-                        thread_id=thread_id
+                        initial_message = await message.channel.send(
+                            "Thinking... <a:thinking:1174880300425388042>",
+                            reference=message
+                        )
+                    except Exception as e:
+                        print(f"Error sending initial message: {e}")
+                
+                # Get the guild ID if applicable
+                guild_id = str(message.guild.id) if message.guild else None
+                
+                # Get context manager for enhanced context
+                context_manager = get_context_manager()
+                context = {}
+                
+                if context_manager:
+                    try:
+                        # Get conversation context
+                        thread_id = None
+                        if isinstance(message.channel, discord.Thread):
+                            thread_id = str(message.channel.id)
+                        
+                        context = context_manager.get_conversation_context(
+                            user_id=user_id,
+                            channel_id=channel_id,
+                            query=clean_content,
+                            thread_id=thread_id
+                        )
+                    except Exception as e:
+                        print(f"Error getting context: {e}")
+                
+                # Check for forced method from message
+                force_method = None
+                method_prefixes = {
+                    "/sequential": "sequential",
+                    "/cot": "sequential",
+                    "/react": "react",
+                    "/verify": "verification",
+                    "/search": "search",
+                }
+                
+                # Check for method prefixes
+                for prefix, method in method_prefixes.items():
+                    if clean_content.lower().startswith(prefix):
+                        force_method = method
+                        # Remove the prefix from the content
+                        clean_content = clean_content[len(prefix):].strip()
+                        break
+                
+                # Analyze the complexity
+                should_use_sequential = await should_use_sequential_thinking(clean_content)
+                
+                # Get enhanced instructions if available
+                enhanced_instructions = None
+                if self.instructions:
+                    instruction_key = "Agent"
+                    if instruction_key in self.instructions:
+                        enhanced_instructions = self.instructions[instruction_key]
+                
+                # Get the router
+                router = get_router()
+                if not router:
+                    print("Error: No router available")
+                    if initial_message:
+                        await initial_message.delete()
+                    await message.channel.send(
+                        "I'm having trouble with my reasoning system. Please try again later.",
+                        reference=message
                     )
-                except AttributeError:
-                    # Fallback if build_context method doesn't exist
-                    print("Warning: context_manager.build_context method not found")
-            
-            # Add enhanced instructions from configurator if available
-            guild_id = str(message.guild.id) if message.guild else None
-            enhanced_instructions = None
-            
-            # Analyze query to see if it needs sequential thinking
-            should_use_sequential = self._should_use_sequential_thinking(clean_content)
-            
-            # Generator router instance if needed
-            router = None
-            if not hasattr(self, 'router_adapter') or not self.router_adapter:
+                    return
+                
+                # Initialize necessary parameters for the router call
+                router_params = {
+                    "query": clean_content,
+                    "username": username,
+                    "user_id": user_id,
+                    "channel_id": channel_id,
+                    "guild_id": guild_id,
+                    "history": context.get("history", []),
+                    "enhanced_instructions": enhanced_instructions,
+                    "enhanced_context": context,
+                    "force_method": force_method
+                }
+                
+                # Process the message with appropriate router method
+                response = None
+                
                 try:
-                    from bot_utilities.router_compatibility import create_router_adapter
-                    self.router_adapter = create_router_adapter()
-                    router = self.router_adapter
-                except Exception as e:
-                    print(f"Error creating router adapter: {e}")
-            else:
-                router = self.router_adapter
+                    # Check if the router.process method is async
+                    if hasattr(router.process, "__await__") or asyncio.iscoroutinefunction(router.process):
+                        # If it's async, we need to await it
+                        response = await router.process(**router_params)
+                    else:
+                        # If it's not async, we call it directly
+                        # ReasoningRouter.process is NOT an async method
+                        response = router.process(**router_params)
+                    
+                    # Check if we got back a coroutine object instead of a response
+                    if hasattr(response, "__await__"):
+                        logger.warning("Router returned a coroutine object instead of a response")
+                        response = await response  # Await the coroutine to get the actual response
+                except Exception as router_error:
+                    logger.error(f"Router processing error: {router_error}")
+                    if initial_message:
+                        await initial_message.delete()
+                    await message.channel.send(
+                        f"I encountered an error while processing your message: {str(router_error)[:100]}...",
+                        reference=message
+                    )
+                    return
             
-            if router is None:
-                # Fallback if we can't get a router
-                await message.channel.send("I'm having trouble processing your request. Please try again later.")
-                return
-            
-            # Generate content from router
-            force_method = "sequential" if should_use_sequential else None
-            response = await router.process(
-                query=clean_content,
-                username=username,
-                user_id=user_id,
-                channel_id=channel_id,
-                guild_id=guild_id,
-                history=context.get("history", []),
-                enhanced_instructions=enhanced_instructions,
-                enhanced_context=context,
-                force_method=force_method
-            )
-            
-            # Determine if this is a sequential thinking style response
-            metadata = response[1] if isinstance(response, tuple) and len(response) > 1 else {}
-            method = metadata.get("method", "standard")
-            
-            # Check for sequential thinking indicators in the response
-            response_text = response[0] if isinstance(response, tuple) and len(response) > 0 else str(response)
-            has_sequential_markers = "**Step" in response_text or "**Thought" in response_text
-            
-            # Determine if we should treat this as sequential thinking
-            is_sequential = (
-                method in ["sequential", "cot", "got", "list", "cov"] or 
-                has_sequential_markers or
-                should_use_sequential
-            )
-            
-            # Use our unified response method
-            await self.send_response(
-                message=message, 
-                response=response, 
-                is_sequential=is_sequential,
-                problem=clean_content,
-                initial_message=initial_message
-            )
+                # Make sure we got a proper response
+                if not response:
+                    if initial_message:
+                        await initial_message.delete()
+                    await message.channel.send("I'm sorry, I couldn't generate a response. Please try again.")
+                    return
+                
+                # Check if response is a tuple or string
+                response_text = None
+                metadata = {}
+                if isinstance(response, tuple) and len(response) >= 1:
+                    response_text = response[0]
+                    if len(response) >= 2 and isinstance(response[1], dict):
+                        metadata = response[1]
+                else:
+                    response_text = str(response)
+                
+                # Check for coroutine
+                if hasattr(response_text, "__await__"):
+                    logger.warning("Response text is a coroutine, awaiting it")
+                    try:
+                        response_text = await response_text
+                    except Exception as e:
+                        logger.error(f"Error awaiting response coroutine: {e}")
+                        response_text = "I encountered a technical issue. Please try again later."
+                
+                # Determine if this is a sequential thinking style response
+                method = metadata.get("method", "standard")
+                
+                # Check for sequential thinking indicators in the response
+                has_sequential_markers = "**Step" in response_text or "**Thought" in response_text
+                
+                # Determine if we should treat this as sequential thinking
+                is_sequential = (
+                    method in ["sequential", "cot", "got", "list", "cov"] or 
+                    has_sequential_markers or
+                    should_use_sequential
+                )
+                
+                # Use our unified response method
+                await self.send_response(
+                    message=message, 
+                    response=(response_text, metadata), 
+                    is_sequential=is_sequential,
+                    problem=clean_content,
+                    initial_message=initial_message
+                )
             
         except Exception as e:
-            print(f"Error in handle_message_with_reasoning_router: {e}")
+            logger.error(f"Error in handle_message_with_reasoning_router: {e}")
             traceback.print_exc()
             try:
                 await message.channel.send(
-                    "I encountered an error while processing your message. Please try again later.",
+                    f"I encountered an error while processing your message: {str(e)[:100]}...",
                     reference=message
                 )
             except:
                 pass
-            
-    def _should_use_sequential_thinking(self, query):
-        """
-        Determine if a query would benefit from sequential thinking
-        
-        Args:
-            query: The user's question/query
-            
-        Returns:
-            bool: True if sequential thinking should be used
-        """
-        # Check if sequential thinking is mentioned
-        if re.search(r'sequential\s+thinking|step\s+by\s+step|breakdown|break\s+down', query.lower()):
-            return True
-            
-        # Check for complexity indicators
-        complexity_indicators = [
-            # Question complexity
-            r'why', r'how', r'explain', r'analyze', r'compare', r'contrast', 
-            r'pros\s+and\s+cons', r'advantages', r'disadvantages',
-            
-            # Topic complexity 
-            r'complex', r'complicated', r'difficult', r'advanced',
-            r'in\s+depth', r'detailed', r'comprehensive', r'thorough',
-            
-            # Multi-step problems
-            r'steps?', r'process', r'procedure', r'method', r'approach',
-            r'algorithm', r'formula', r'equation', r'calculate', r'solve',
-            
-            # Abstract concepts
-            r'concept', r'theory', r'principle', r'philosophy', r'framework',
-            
-            # Logic and reasoning
-            r'logic', r'reasoning', r'argument', r'fallacy', r'critique',
-            r'evaluate', r'assess', r'judge', r'review',
-            
-            # Historical/political topics
-            r'history', r'politics', r'war', r'conflict', r'revolution',
-            r'movement', r'era', r'period', r'century', r'decade',
-            
-            # Scientific topics
-            r'science', r'physics', r'chemistry', r'biology', r'mathematics',
-            r'psychology', r'sociology', r'economics', r'research'
-        ]
-        
-        # Check if any complexity indicators are present
-        if any(re.search(pattern, query.lower()) for pattern in complexity_indicators):
-            # Only use sequential for longer queries (likely more complex questions)
-            if len(query.split()) >= 8:
-                return True
-                
-        # Check for question marks and length
-        if query.count('?') >= 2 or len(query.split()) >= 15:
-            return True
-            
-        # Default to standard response
-        return False
 
     async def handle_image_generation(self, message, prompt):
         """Handle image generation intent"""
@@ -1174,33 +1200,39 @@ Think step-by-step and consider all available information before responding."""
             response_text = response
             metadata = {}
             
-            # Handle tuple responses (response_text, metadata)
-            if isinstance(response, tuple) and len(response) >= 1:
-                response_text = response[0]  # Extract just the response text
-                if len(response) >= 2 and isinstance(response[1], dict):
-                    metadata = response[1]   # Extract metadata for context storage
-            # Check if the response might be a string representation of a tuple
-            elif isinstance(response, str) and response.startswith("(") and ("method" in response or "{" in response):
+            # Handle coroutine objects accidentally passed
+            if hasattr(response, "__await__"):
                 try:
-                    # Try to extract the text part using regex
-                    import re
-                    match = re.search(r'^\s*\(\s*[\'"](.+?)[\'"]\s*,', response, re.DOTALL)
-                    if match:
-                        response_text = match.group(1)
-                        # Try to extract metadata too if possible
-                        metadata_match = re.search(r',\s*(\{.+\})\s*\)$', response, re.DOTALL)
-                        if metadata_match:
-                            try:
-                                # Safely evaluate the metadata dictionary string
-                                import ast
-                                metadata_str = metadata_match.group(1).replace("'", '"')
-                                metadata = ast.literal_eval(metadata_str)
-                            except:
-                                # If metadata parsing fails, continue with empty metadata
-                                metadata = {}
-                except:
-                    # If regex fails, keep the original response
-                    response_text = response
+                    response = await response
+                    logger.warning("Coroutine object was passed to send_response")
+                except Exception as e:
+                    logger.error(f"Error awaiting coroutine in send_response: {e}")
+                    response_text = "I encountered a technical issue while processing your request."
+                    
+                    # Delete initial message if provided
+                    if initial_message:
+                        try:
+                            await initial_message.delete()
+                        except:
+                            pass
+                            
+                    await message.channel.send(response_text, reference=message_reference or message)
+                    return
+            
+            # Handle tuple responses (response_text, metadata)
+            if isinstance(response, tuple):
+                if len(response) >= 1:
+                    response_text = response[0]  # Extract just the response text
+                    # Check if the response text is a coroutine
+                    if hasattr(response_text, "__await__"):
+                        try:
+                            response_text = await response_text
+                        except Exception as e:
+                            logger.error(f"Error awaiting response_text coroutine: {e}")
+                            response_text = "I encountered a technical issue while processing your request."
+                            
+                    if len(response) >= 2 and isinstance(response[1], dict):
+                        metadata = response[1]   # Extract metadata for context storage
             
             # Ensure we're working with a string
             if not isinstance(response_text, str):
@@ -1209,41 +1241,25 @@ Think step-by-step and consider all available information before responding."""
                 except:
                     response_text = "Error formatting response"
             
-            # Clean response text from any tuple or metadata artifacts
-            # Remove tuple-like patterns
-            if "(" in response_text and ")" in response_text:
+            # Remove any tuple formatting artifacts from the string representation
+            # This handles cases where tuple formatting is in the string itself
+            if response_text.startswith("(") and response_text.endswith(")") and "," in response_text:
                 try:
-                    match = re.search(r"^\s*\(\s*['\"](.+?)['\"]", response_text, re.DOTALL)
-                    if match:
-                        response_text = match.group(1)
+                    # Try to evaluate as a literal tuple
+                    import ast
+                    evaluated = ast.literal_eval(response_text)
+                    if isinstance(evaluated, tuple) and len(evaluated) > 0:
+                        response_text = str(evaluated[0])
                 except:
-                    pass
-            
-            # Remove metadata patterns
-            response_text = re.sub(r"\{'method':.*?\}", "", response_text).strip()
-            response_text = re.sub(r"\('.*?', \{'method':.*?\}\)", "", response_text).strip()
-            
-            # Remove conclusion markers that might be in sequential thinking responses
-            response_text = response_text.replace("Conclusion: ", "")
-            
-            # Remove any remaining formatting artifacts
-            response_text = response_text.strip('"\'() ')
-            
-            # Apply Discord markdown formatting if enabled
-            if USE_MARKDOWN_FORMATTING:
-                # For sequential thinking, enhance the formatting with Discord markdown
-                if is_sequential and "**Step" in response_text:
-                    # Format sequential thinking steps with better Discord markdown
-                    response_text = re.sub(r'\*\*Step (\d+)\*\*:', r'__**Step \1**__:', response_text)
-                    response_text = re.sub(r'\*\*Thought (\d+)\*\*:', r'__**Thought \1**__:', response_text)
-                    response_text = re.sub(r'\*\*Conclusion\*\*:', r'__**Conclusion**__:', response_text)
-                    response_text = re.sub(r'\*\*Verification\*\*:', r'__**Verification**__:', response_text)
-                
-                # Highlight code blocks with proper Discord markdown
-                response_text = re.sub(r'```(\w+)?', r'```\1', response_text)  # Ensure code blocks have language
-                
-                # Ensure blockquotes are properly formatted
-                response_text = re.sub(r'^>', r'> ', response_text, flags=re.MULTILINE)
+                    # If evaluation fails, use simple string extraction
+                    # Find first quote
+                    for quote_char in ['"', "'"]:
+                        start_quote = response_text.find(quote_char)
+                        if start_quote >= 0:
+                            end_quote = response_text.find(quote_char, start_quote + 1)
+                            if end_quote > start_quote:
+                                response_text = response_text[start_quote + 1:end_quote]
+                                break
             
             # Delete initial message if provided (like "thinking..." message)
             if initial_message:
@@ -1299,53 +1315,64 @@ Think step-by-step and consider all available information before responding."""
             
             # Store the response in context manager for conversation continuity
             context_manager = get_context_manager()
-            if context_manager:
-                # Get metadata for storage if available
-                method = metadata.get("method", "sequential" if is_sequential else "standard")
-                method_name = metadata.get("method_name", "Sequential Thinking" if is_sequential else "Standard Response")
-                is_fallback = metadata.get("is_fallback", False)
-                
-                # Calculate thread ID (threads have the same ID as their channel)
+            if context_manager and hasattr(message, "author") and message.channel:
+                # Get thread ID if we're in a thread
                 thread_id = str(message.channel.id) if isinstance(message.channel, discord.Thread) else None
                 
-                # Store in conversation history
-                context_manager.add_message(
-                    user_id=str(message.author.id),
-                    channel_id=str(message.channel.id),
-                    thread_id=thread_id,
-                    message={
-                        "role": "assistant",
-                        "content": response_text,
-                        "timestamp": time.time(),
-                        "type": method,
-                        "method": method_name,
-                        "is_fallback": is_fallback,
-                        "in_response_to": problem if problem else ""
-                    }
-                )
-                
-                # Store thinking process if applicable
-                if is_sequential and problem:
-                    context_manager.add_thinking_process(
-                        user_id=str(message.author.id),
-                        channel_id=str(message.channel.id),
+                try:
+                    user_id = str(message.author.id)
+                    channel_id = str(message.channel.id)
+                    
+                    # Extract method information from metadata
+                    method = metadata.get("method", "default") if isinstance(metadata, dict) else "default"
+                    method_name = metadata.get("method_name", "Standard Response") if isinstance(metadata, dict) else "Standard Response"
+                    is_fallback = metadata.get("is_fallback", False) if isinstance(metadata, dict) else False
+                    
+                    # Store the message in context
+                    context_manager.add_message(
+                        user_id=user_id,
+                        channel_id=channel_id,
                         thread_id=thread_id,
-                        thinking={
-                            "problem": problem,
-                            "solution": response_text,
-                            "prompt_style": method,
-                            "method_name": method_name,
-                            "is_complex": True,
+                        message={
+                            "role": "assistant",
+                            "content": response_text,
                             "timestamp": time.time(),
-                            "success": True,
+                            "method": method,
                             "is_fallback": is_fallback
                         }
                     )
+                    
+                    # Store thinking process if applicable
+                    if is_sequential and problem:
+                        context_manager.add_thinking_process(
+                            user_id=str(message.author.id),
+                            channel_id=str(message.channel.id),
+                            thread_id=thread_id,
+                            thinking={
+                                "problem": problem,
+                                "solution": response_text,
+                                "prompt_style": method,
+                                "method_name": method_name,
+                                "is_complex": True,
+                                "timestamp": time.time(),
+                                "success": True,
+                                "is_fallback": is_fallback
+                            }
+                        )
+                except Exception as e:
+                    logger.error(f"Error adding message to context: {str(e)}")
         except Exception as e:
-            print(f"Error sending response: {e}")
+            logger.error(f"Error sending response: {e}")
+            traceback.print_exc()
             try:
+                if initial_message:
+                    try:
+                        await initial_message.delete()
+                    except:
+                        pass
+                
                 await message.channel.send(
-                    "I'm having trouble sending my response. Please try again later.",
+                    f"I'm having trouble sending my response. Error: {str(e)[:100]}...",
                     reference=message_reference or message
                 )
             except:
@@ -1394,7 +1421,7 @@ Think step-by-step and consider all available information before responding."""
             user_id = str(message.author.id)
             channel_id = str(message.channel.id)
             
-            # Process message with reasoning router
+            # Process message with reasoning router (don't await, it already internally awaits)
             await self.handle_message_with_reasoning_router(message, clean_content, username, user_id, channel_id)
         except Exception as e:
             logger.error(f"Error in on_message: {e}")
@@ -1402,3 +1429,108 @@ Think step-by-step and consider all available information before responding."""
 
 async def setup(bot):
     await bot.add_cog(OnMessage(bot))
+
+def format_response_for_discord(response_text, use_embeds=False, author_name=None, avatar_url=None):
+    """
+    Format a response for optimal Discord display
+    
+    Args:
+        response_text: The response text to format
+        use_embeds: Whether to use Discord embeds
+        author_name: Name to show in embed author field
+        avatar_url: Avatar URL to show in embed
+        
+    Returns:
+        Tuple[content, embed, chunks]: Content string, Embed object, and array of text chunks
+    """
+    import re
+    import discord
+    from discord import Embed, Color
+    
+    # Split long messages to fit Discord's limit
+    chunks = []
+    content = None
+    embed = None
+    
+    # For code blocks, we need to handle them specially to preserve formatting
+    code_blocks = re.findall(r'```(?:\w+)?\n[\s\S]+?\n```', response_text)
+    
+    if code_blocks and len(code_blocks) > 0:
+        # There are code blocks that might need special handling
+        current_chunk = response_text
+        
+        # If the message is too long, we need to split it
+        if len(current_chunk) > 1990:
+            # Split by code blocks to preserve them
+            pattern = r'(```(?:\w+)?\n[\s\S]+?\n```)'
+            parts = re.split(pattern, current_chunk)
+            
+            current_chunk = ""
+            for part in parts:
+                # If this part is a code block
+                is_code_block = part.startswith('```') and part.endswith('```')
+                
+                # If adding this part would exceed the limit
+                if len(current_chunk) + len(part) > 1990:
+                    # Add the current chunk to our chunks array
+                    chunks.append(current_chunk)
+                    current_chunk = part if is_code_block else part.lstrip()
+                else:
+                    # Add to the current chunk
+                    current_chunk += part
+            
+            # Add any remaining content
+            if current_chunk:
+                chunks.append(current_chunk)
+        else:
+            # Single chunk, no splitting needed
+            chunks = [current_chunk]
+    else:
+        # No code blocks, we can split more easily
+        current_chunk = ""
+        for line in response_text.split('\n'):
+            if len(current_chunk) + len(line) + 1 > 1990:
+                chunks.append(current_chunk)
+                current_chunk = line
+            else:
+                if current_chunk:
+                    current_chunk += '\n' + line
+                else:
+                    current_chunk = line
+        
+        if current_chunk:
+            chunks.append(current_chunk)
+    
+    # If no chunks were created, use the original text
+    if not chunks:
+        chunks = [response_text]
+    
+    # Create an embed if requested
+    if use_embeds:
+        embed = Embed(
+            description=chunks[0][:4000] if chunks else response_text[:4000],
+            color=Color.blue()
+        )
+        
+        # Add author if provided
+        if author_name:
+            embed.set_author(
+                name=author_name,
+                icon_url=avatar_url
+            )
+            
+        # Set content to empty since we're using an embed
+        content = ""
+        
+        # If the response was split into chunks, the first chunk goes in the embed
+        # and the rest go as regular messages
+        if len(chunks) > 1:
+            chunks = chunks[1:]
+        else:
+            # If only one chunk and it's in the embed, clear chunks
+            chunks = []
+    else:
+        # No embed, so the content is just the original chunks
+        content = None  # Will use chunks directly
+    
+    return content, embed, chunks

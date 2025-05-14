@@ -5,12 +5,14 @@ from discord.ext import commands
 
 from bot_utilities.config_loader import config
 from bot_utilities.context_manager import start_context_manager_tasks
+from bot_utilities.router_init import get_router
 from ..common import presences_disabled, current_language, presences
 
 class OnReady(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.context_manager_initialized = False
+        self.router_initialized = False
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -28,6 +30,12 @@ class OnReady(commands.Cog):
             print("Initializing context manager...")
             asyncio.create_task(self.initialize_context_manager())
             self.context_manager_initialized = True
+            
+        # Initialize router if not already done
+        if not self.router_initialized:
+            print("Initializing router...")
+            asyncio.create_task(self.initialize_router())
+            self.router_initialized = True
         
         if presences_disabled:
             return
@@ -45,6 +53,17 @@ class OnReady(commands.Cog):
             print("Context manager successfully initialized.")
         except Exception as e:
             print(f"Error initializing context manager: {e}")
+            
+    async def initialize_router(self):
+        """Initialize the router for message processing"""
+        try:
+            router = await get_router()
+            if router:
+                print("Router successfully initialized.")
+            else:
+                print("Failed to initialize router.")
+        except Exception as e:
+            print(f"Error initializing router: {e}")
 
 async def setup(bot):
     await bot.add_cog(OnReady(bot))

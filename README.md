@@ -2,15 +2,35 @@
 
 A powerful Discord bot powered by advanced AI models, offering conversational capabilities, image generation, OCR, research assistance, and much more.
 
-## Table of Contents
-- [Features](#features)
-- [Commands](#commands)
-- [Installation Guide](#installation-guide)
-- [Configuration Options](#configuration-options)
-- [Core Capabilities](#core-capabilities)
-- [Advanced Usage](#advanced-usage)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
+## New Restructured Architecture
+
+The codebase has been restructured to follow a more modular, maintainable architecture with clear separation of concerns:
+
+```
+├── core/                   # Core bot functionality
+│   ├── ai_provider.py      # AI integration interface
+│   ├── bot.py              # Bot initialization
+│   └── discord_integration.py # Discord interfacing
+├── commands/               # Discord command handlers
+│   └── basic_commands.py   # Core commands
+├── features/               # Feature modules
+│   ├── conversation/       # Conversation handling
+│   ├── reasoning/          # Reasoning methods
+│   ├── media/              # Media processing
+│   └── knowledge/          # Knowledge management
+├── caching/                # Cache management
+│   └── cache_interface.py  # Cache providers
+├── utils/                  # Shared utilities
+│   └── hallucination_handler.py # Hallucination detection
+├── config.json             # Configuration
+└── main.py                 # Entry point
+```
+
+This new organization offers:
+- **Clearer Module Boundaries**: Each directory serves a specific purpose
+- **Dependency Injection**: Components receive their dependencies explicitly
+- **Easier Maintenance**: Smaller, focused files are easier to reason about
+- **Better Extensibility**: Adding new components is straightforward
 
 ## Features
 
@@ -21,6 +41,14 @@ A powerful Discord bot powered by advanced AI models, offering conversational ca
 - **Thread Support**: Creates and maintains context within Discord threads for organized conversations.
 - **Streaming Responses**: Watch responses appear in real-time as they're generated for a more interactive experience.
 - **Memory System**: Remembers previous conversations for more contextual interactions.
+
+### Advanced Caching System 🚀
+- **Context-Aware Caching**: Intelligent caching that considers conversation context for more accurate response retrieval.
+- **Semantic Matching**: Finds similar questions even when wording is different, improving response times.
+- **Conversation Fingerprinting**: Creates unique fingerprints of conversations to accurately match similar contexts.
+- **Adaptive TTL**: Different time-to-live settings for different types of cached data.
+- **Metrics & Analytics**: Comprehensive metrics for cache performance monitoring.
+- **Multi-level Fallback**: Gracefully falls back from exact matches to semantic matches to fresh generation.
 
 ### Image Capabilities 🎨
 - **Image Generation**: Create stunning AI-generated images from text descriptions using multiple models.
@@ -241,7 +269,7 @@ A powerful Discord bot powered by advanced AI models, offering conversational ca
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/mishalhossin/Discord-AI-Chatbot
+   git clone UNDISCLOSED YET
 cd Discord-AI-Chatbot
 ```
 
@@ -271,7 +299,7 @@ python main.py
 ### Docker Installation
 ```bash
 # Clone repository
-git clone https://github.com/mishalhossin/Discord-AI-Chatbot
+git clone UNDISCLOSED YET
 cd Discord-AI-Chatbot
 
 # Configure environment variables in .env file
@@ -347,6 +375,45 @@ Powered by LangChain, the bot can:
 - Watch responses appear in real-time with streaming mode
 - Get voice responses using text-to-speech technology
 
+## Integrated Reasoning System
+
+The bot features a sophisticated integrated reasoning system that combines multiple reasoning methods working in harmony rather than as separate tools:
+
+### Context-Aware Reasoning Activation
+
+Unlike traditional bots where reasoning capabilities are limited to specific commands, this bot's reasoning system is context-aware and activates dynamically:
+
+- **Natural Trigger Recognition**: The system analyzes message content to detect when specific reasoning approaches would be beneficial, without requiring explicit commands.
+- **Progressive Reasoning**: As conversation complexity increases, the bot automatically scales up its reasoning capabilities.
+- **Transparent Method Selection**: The bot indicates which reasoning method it's using with subtle emoji indicators (🔄 for sequential thinking, 📊 for graph-of-thought, etc.) and iis capable of parsing data between reasonings to give proper output.
+
+### Cooperative Reasoning Methods
+
+Different reasoning approaches work together to enhance understanding:
+
+- **Sequential + Graph Hybrid**: Complex problems get broken down sequentially while maintaining relationships between concepts using graph structures.
+- **RAG-Enhanced Sequential Thinking**: Factual questions within a sequential thinking process trigger automatic RAG-based verification.
+- **ReAct Integration**: Action-requiring steps in any reasoning process automatically trigger appropriate tools and actions.
+- **Multi-Method Verification**: Critical information is verified across multiple reasoning methods for enhanced reliability.
+
+### Adaptive Reasoning Selection
+
+The system intelligently selects the optimal reasoning approach:
+
+- **Query Analysis**: Message content is analyzed for complexity, factuality needs, action requirements, and reasoning patterns.
+- **Conversation Context**: Previous exchanges influence reasoning method selection.
+- **Performance Learning**: The system tracks which methods work best for similar queries and adapts over time.
+- **Seamless Transitions**: The bot can shift between reasoning methods mid-conversation as needed.
+
+### Cross-Conversation Context Awareness
+
+The reasoning system maintains awareness beyond single conversations:
+
+- **Server Knowledge Integration**: Reasoning incorporates server-specific knowledge and history.
+- **User Preference Learning**: Adapts to individual users' reasoning needs and communication styles.
+- **Context Persistence**: Maintains reasoning context across separate conversations with the same user.
+- **Collaborative Understanding**: Builds on concepts discussed in different channels and conversations.
+
 ## Advanced Usage
 
 ### Enhancing Bot Responses
@@ -386,7 +453,5 @@ Contributions are welcome! Here's how you can help:
 
 ---
 
-## Star History
-[![Star History Chart](https://api.star-history.com/svg?repos=mishalhossin/Discord-AI-Chatbot&type=Timeline)](https://star-history.com/#mishalhossin/Discord-AI-Chatbot&Timeline)
 
 ### Crafted with Care: Made with lots of love and attention to detail. ❤️

@@ -1,0 +1,48 @@
+{
+    "prefix": "!",
+    "cogs_path": "cogs",
+    "cache_type": "memory",
+    "cache_config": {
+        "default_ttl": 3600
+    },
+    "context_cache_config": {
+        "ttl": 7200,
+        "max_context_size": 10
+    },
+    "semantic_cache_config": {
+        "ttl": 86400,
+        "similarity_threshold": 0.85
+    },
+    "ai_type": "base",
+    "ai_config": {
+        "model": "gpt-4"
+    },
+    "hallucination_config": {
+        "verification_threshold": 0.7,
+        "enable_grounding": true
+    },
+    "reasoning_config": {
+        "default_method": "sequential",
+        "complexity_threshold": 0.7,
+        "enable_auto_selection": true
+    },
+    "integrated_reasoning_config": {
+        "enable_context_aware_triggering": true,
+        "enable_hybrid_methods": true,
+        "trigger_confidence_threshold": 0.5,
+        "conversation_complexity_decay": 0.1,
+        "state_ttl": 3600
+    },
+    "features": {
+        "reaction_responses": true,
+        "auto_thread_creation": false,
+        "message_history_limit": 10,
+        "semantic_matching": true,
+        "context_awareness": true,
+        "integrated_reasoning": true
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "discord_bot.log"
+    }
+} 

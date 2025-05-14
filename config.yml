@@ -11,7 +11,8 @@ LOCAL_MODEL_ID: mistral-nemo-instruct-2407 # The model ID for the local model
 ALLOW_DM: true # Set to true to allow direct messages
 SMART_MENTION: true # Set to true to enable smart mention feature
 
-MODEL_ID: meta-llama/llama-4-maverick-17b-128e-instruct # Model used for chat completion (for remote API)
+MODEL_ID1: compound-beta
+MODEL_ID2:  # Model used for chat completion (for remote API)
 
 MAX_HISTORY: 8 # Set the maximum message history
 

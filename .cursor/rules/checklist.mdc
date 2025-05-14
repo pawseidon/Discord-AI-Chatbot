@@ -3,4 +3,59 @@ description:
 globs: 
 alwaysApply: true
 ---
-Use checklist.md for comprehensive and complex tasks and plan things eventually, sequentually and often.
+# Implementation Checklist
+
+## Reasoning Strategy Selection and Routing
+- [ ] **Query Analysis:** Detect if a question is simple (direct answer) or complex (requires multi-step reasoning or tools).
+- [ ] **ReAct Framework:** Implement a Thought/Action/Observation loop. Ensure the agent can emit thoughts, call tools (actions), and incorporate observations back into context.
+- [ ] **Sequential Thinking:** Support explicit chain-of-thought (step-by-step reasoning).
+- [ ] **Graph-of-Thought:** Enable branching reasoning paths and merging results; design data structures to track partial “thought” nodes and dependencies.
+- [ ] **Retrieval Methods:**
+  - [ ] Implement CRAG: Retrieval-augmented generation where each reasoning step can trigger a knowledge search or document lookup.
+  - [ ] Speculative RAG: Enable parallel draft generation with different subsets of retrieved data, and then a verification step to choose or fuse the best answer:contentReference[oaicite:16]{index=16}.
+  - [ ] RAG Fusion: Allow multiple sub-queries or re-rank retrieval results to cover different aspects of complex queries (multi-perspective retrieval).
+- [ ] **Chain-of-Verification (CoVe):** Implement CoVe prompting pipeline: 
+  - [ ] After initial answer draft, generate fact-check questions.
+  - [ ] Use tools to answer those questions independently.
+  - [ ] Regenerate or adjust the final answer based on verified facts:contentReference[oaicite:17]{index=17}.
+- [ ] **Chain-of-Density:** For summarization tasks, support iterative densification: generate a concise summary then refine it by adding detail without increasing length.
+- [ ] **Step-Back Prompting:** If stuck or hallucinating, implement a “step-back” plan generation (ask for high-level plan or concepts, then reason deeper).
+
+## Discord UI/UX Compatibility
+- [ ] **Slash Commands:** Register slash commands; ensure the agent correctly identifies when input comes from a slash interaction.
+- [ ] **Ephemeral Responses:** Use Discord’s ephemeral message flags for private responses:contentReference[oaicite:18]{index=18}.
+- [ ] **Thread Context:** Fetch and include entire thread history when forming responses. Send replies within the same thread context.
+- [ ] **Rate Limits & Streaming:** Handle Discord rate limits by chunking large responses or queuing. If streaming is supported, send parts of the answer as they are generated.
+- [ ] **Markdown Formatting:** Render answers using Discord markdown (code blocks for code or logs, bullet lists, bold/italic for emphasis).
+- [ ] **Role/Channel Permissions:** Before including any content (text, images, attachments), verify that the user has permission to see it. Avoid leaking data from private channels.
+- [ ] **Error Feedback:** Gracefully handle Discord-specific errors (e.g., lost thread context, missing permissions) by notifying the user or logging.
+
+## Context-Aware Caching and Memory
+- [ ] **Cache Fingerprinting:** Design a method to fingerprint queries or contexts (e.g., embeddings) to check for cached responses.
+- [ ] **Semantic Matching:** Implement semantic similarity search over past interactions to reuse relevant content (MemGPT-style recall):contentReference[oaicite:19]{index=19}.
+- [ ] **Long-Term Memory:** Build multi-tier memory (Core, Recall, Archive) as per MemGPT. Use prompts or functions to store important facts (e.g., user preferences) and retrieve them as needed:contentReference[oaicite:20]{index=20}.
+- [ ] **Cache Updating:** Invalidate or update cached entries when underlying data changes (knowledge base updates) or upon explicit user feedback.
+- [ ] **Privacy & Scope:** Ensure memory respects scope: user-specific memory vs global vs channel-specific, only recall what’s appropriate for current context.
+
+## Multi-Modal and Tool Orchestration
+- [ ] **Tool Interface Layer:** Develop interfaces/wrappers for external tools: knowledge-base API, web search, image API, audio API, etc.
+- [ ] **Tool Selection Logic:** Based on user intent, route to the correct tool. (E.g., if user asks “show image of X”, route to `image_generate`. If “what does this audio say?”, route to `audio_transcribe`.)
+- [ ] **Image/Audio Processing:** Ensure extracted text (via OCR, transcription) is included in the reasoning context. For generated images, attach or link them respecting channel rules.
+- [ ] **Sequential Tool Chaining:** Support calling one tool’s output as another’s input (e.g., transcribe speech → analyze text).
+- [ ] **Multi-Agent Coordination (if used):** If employing multiple LLM instances (e.g. crew of specialist agents), orchestrate their prompts and merge their outputs.
+
+## Hallucination Detection & Mitigation
+- [ ] **Fact-Checking Module:** Integrate or develop a hallucination detector (e.g., a classifier or secondary verification agent). Check answers against trusted sources.
+- [ ] **Self-Reflection:** Program the agent to explicitly re-evaluate uncertain statements, possibly by issuing new retrieval queries or cross-verifying with alternate facts.
+- [ ] **Multi-Agent Critique:** Optionally run the answer through another LLM (or separate chain of thought) to critique and refine it.
+- [ ] **Confidence Monitoring:** Compute or estimate confidence scores; if low, either state uncertainty or activate additional verification steps.
+- [ ] **Fallback to Sources:** When possible, attach citations or source excerpts from the knowledge base for factual claims.
+
+## Tool Fallback and Error Handling
+- [ ] **Tool Invocation Failures:** If a tool API fails or returns no data, have a fallback strategy (retry, skip with notice, or use default knowledge).
+- [ ] **Retries and Backoff:** Implement limited retries and exponential backoff on transient errors (e.g., network timeouts, rate-limit responses).
+- [ ] **Fallback Answers:** If unable to verify a claim, either answer qualitatively (“I’m not certain…”) or defer to alternative explanations.
+- [ ] **Discord Issues:** Detect and handle Discord-specific issues (e.g., context loss when a thread is archived). Prompt the user to clarify or resume interaction if needed.
+- [ ] **Infinite Loop Prevention:** Monitor reasoning loops (tool calls → new prompts) to ensure the agent eventually returns an answer or aborts with a message.
+- [ ] **Logging & Alerts:** Log all tool errors and hallucination flags. Set up alerts or diagnostics for frequent failures.
+
