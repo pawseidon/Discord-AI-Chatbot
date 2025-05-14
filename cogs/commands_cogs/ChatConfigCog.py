@@ -4,9 +4,9 @@ from discord.ext import commands
 from ..common import current_language, instructions, instruc_config, message_history
 from bot_utilities.config_loader import load_active_channels
 import json
-from bot_utilities.memory_utils import UserPreferences
 import os
 from bot_utilities.fallback_utils import FALLBACK_DIR
+from bot_utilities.services.memory_service import memory_service
 
 class ChatConfigCog(commands.Cog):
     def __init__(self, bot):
@@ -33,6 +33,16 @@ class ChatConfigCog(commands.Cog):
                 json.dump(active_channels, f, indent=4)
             await ctx.send(f"{ctx.channel.mention} {current_language['toggleactive_msg_2']}", delete_after=3)
 
+    @commands.hybrid_command(name="toggleinactive", description="Toggle the bot inactive/active in the current channel")
+    @discord.app_commands.choices(persona=[
+        discord.app_commands.Choice(name=persona.capitalize(), value=persona)
+        for persona in instructions
+    ])
+    @commands.has_permissions(administrator=True)
+    async def toggleinactive(self, ctx, persona: discord.app_commands.Choice[str] = instructions[instruc_config]):
+        """Toggle the bot inactive/active in the current channel - alternative name for toggleactive"""
+        await self.toggleactive(ctx, persona)
+
     @commands.hybrid_command(name="clear", description=current_language["bonk"])
     async def clear(self, ctx):
         try:
@@ -57,7 +67,7 @@ class ChatConfigCog(commands.Cog):
         """
         # If no parameters provided, just show current preferences
         if response_length is None and voice_enabled is None and use_embeds is None and streaming_enabled is None:
-            prefs = await UserPreferences.get_user_preferences(ctx.author.id)
+            prefs = await memory_service.get_user_preferences(ctx.author.id)
             
             # Format the preferences into a nice embed
             embed = discord.Embed(
@@ -111,28 +121,28 @@ class ChatConfigCog(commands.Cog):
                 await ctx.send("⚠️ Response length must be 'short', 'medium', or 'long'", delete_after=4)
                 return
                 
-            await UserPreferences.update_user_preference(
+            await memory_service.set_user_preference(
                 ctx.author.id, 
                 "preferred_response_length", 
                 response_length.lower()
             )
             
         if voice_enabled is not None:
-            await UserPreferences.update_user_preference(
+            await memory_service.set_user_preference(
                 ctx.author.id,
                 "use_voice",
                 voice_enabled
             )
             
         if use_embeds is not None:
-            await UserPreferences.update_user_preference(
+            await memory_service.set_user_preference(
                 ctx.author.id,
                 "use_embeds",
                 use_embeds
             )
             
         if streaming_enabled is not None:
-            await UserPreferences.update_user_preference(
+            await memory_service.set_user_preference(
                 ctx.author.id,
                 "use_streaming",
                 streaming_enabled

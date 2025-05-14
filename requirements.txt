@@ -44,3 +44,33 @@ pillow>=10.0.0
 # Utility
 python-dateutil>=2.8.2
 pydantic>=2.0.0
+
+# New dependencies for advanced agent components
+langgraph>=0.0.25
+sentence-transformers>=2.2.2
+tavily-python>=0.3.2
+pillow>=10.1.0
+langchain-core>=0.1.5
+typing-inspect>=0.9.0
+numpy>=1.24.4
+duckduckgo-search>=4.2.0
+tiktoken>=0.5.1
+simple-websocket>=1.0.0
+SpeechRecognition>=3.10.1
+pydub>=0.25.1
+requests>=2.31.0
+boto3>=1.34.20
+torch>=2.1.2
+emoji>=2.8.0
+google-generativeai>=0.2.1
+
+# New dependencies for advanced agent components
+langgraph>=0.0.25
+sentence-transformers>=2.2.2
+beautifulsoup4>=4.12.2
+
+# Symbolic reasoning requirements
+sympy>=1.12.0
+networkx>=3.2.1
+pandas>=2.1.0
+matplotlib>=3.8.0

@@ -1,0 +1,297 @@
+# Multi-Agent Architecture Configuration
+# This file defines configuration for each agent type in the system
+
+# Global settings applied to all agents unless overridden
+global:
+  temperature: 0.7
+  max_tokens: 1000
+  top_p: 0.95
+  memory_enabled: true
+  context_window: 4000
+  enable_delegation: true
+  default_tools:
+    - calculator
+    - time
+    - date
+    - emoji
+    - chat_history
+
+# Agent-specific configurations
+agents:
+  conversational:
+    emoji: 💬
+    temperature: 0.9
+    description: "Friendly conversational agent for casual chat"
+    system_prompt: |
+      You are a friendly conversational assistant that excels at casual, engaging dialogue.
+      Respond in a warm, personable tone and keep the conversation flowing naturally.
+      If the user needs information or complex reasoning, consider delegating to a more specialized agent.
+    tools:
+      - emoji
+      - chat_history
+      - giphy
+    detector_patterns:
+      - "how are you"
+      - "what's up"
+      - "hello"
+      - "hey"
+      - "hi"
+      - "nice to meet you"
+      - "good morning"
+      - "good evening"
+
+  sequential:
+    emoji: 🧠
+    temperature: 0.3
+    description: "Step-by-step analytical thinking for complex problems"
+    system_prompt: |
+      You are a Sequential Thinking agent that excels at breaking down complex problems into clear steps.
+      Always structure your thinking process explicitly, showing each step of reasoning.
+      Use numbered lists or clear step-by-step format to communicate your thought process.
+      If you need specific factual information, consider delegating to the RAG agent.
+    tools:
+      - calculator
+      - logic_engine
+      - step_analyzer
+      - search
+    detector_patterns:
+      - "explain"
+      - "analyze"
+      - "steps"
+      - "process"
+      - "how does"
+      - "why does"
+      - "break down"
+      - "understand"
+
+  rag:
+    emoji: 🔍
+    temperature: 0.2
+    description: "Retrieval-Augmented Generation for information lookup"
+    system_prompt: |
+      You are a Retrieval-Augmented Generation agent focused on finding accurate information.
+      Use search tools to provide current, factual information with proper citations.
+      Be precise and comprehensive when providing information.
+      Clearly distinguish between retrieved facts and any inferences you make.
+    tools:
+      - search
+      - web_browse
+      - fact_check
+      - knowledge_base
+    detector_patterns:
+      - "what is"
+      - "define"
+      - "who is"
+      - "when did"
+      - "where is"
+      - "search for"
+      - "find information"
+      - "lookup"
+      - "info about"
+
+  knowledge:
+    emoji: 📚
+    temperature: 0.4
+    description: "In-depth explanations and educational content"
+    system_prompt: |
+      You are a Knowledge agent that specializes in providing comprehensive, educational explanations.
+      Present information in a structured, clear manner suitable for learning.
+      Include relevant concepts, principles, and examples in your explanations.
+      Consider using analogies to explain complex concepts when appropriate.
+    tools:
+      - search
+      - knowledge_graph
+      - concept_mapper
+    detector_patterns:
+      - "explain in detail"
+      - "teach me"
+      - "how does it work"
+      - "principles of"
+      - "concept of"
+      - "learn about"
+      - "understand"
+      - "educational"
+
+  verification:
+    emoji: ✅
+    temperature: 0.1
+    description: "Fact-checking and validation agent"
+    system_prompt: |
+      You are a Verification agent focused on fact-checking and validating information.
+      Critically assess claims by examining evidence and reliable sources.
+      Be balanced and objective in your assessments, noting degrees of certainty.
+      Flag misinformation and explain why a claim may be incorrect or misleading.
+    tools:
+      - fact_check
+      - search
+      - source_validator
+      - symbolic_verifier
+    detector_patterns:
+      - "verify"
+      - "fact check"
+      - "is it true"
+      - "confirm"
+      - "validate"
+      - "accurate"
+      - "reliable"
+      - "trustworthy"
+
+  creative:
+    emoji: 🎨
+    temperature: 1.0
+    description: "Story, art, and creative content generation"
+    system_prompt: |
+      You are a Creative agent specializing in generating imaginative, original content.
+      Express ideas with vivid imagery, engaging narrative, and unique perspectives.
+      Balance creative flair with coherence and purpose in your creations.
+      Adapt your style based on the specific creative task requested.
+    tools:
+      - story_generator
+      - metaphor_creator
+      - image_describer
+      - style_adapter
+    detector_patterns:
+      - "write a story"
+      - "creative"
+      - "imagine"
+      - "poem"
+      - "fiction"
+      - "story"
+      - "artistic"
+      - "create"
+      - "design"
+
+  calculation:
+    emoji: 🔢
+    temperature: 0.1
+    description: "Mathematical operations and computations"
+    system_prompt: |
+      You are a Calculation agent specializing in mathematical operations and numerical analysis.
+      Show your work step-by-step, explaining each operation clearly.
+      Use the calculator and symbolic math tools for precise results.
+      For complex math problems, break them down into manageable components.
+    tools:
+      - calculator
+      - equation_solver
+      - symbolic_math
+      - graph_plotter
+    detector_patterns:
+      - "calculate"
+      - "solve"
+      - "compute"
+      - "what is the value"
+      - "equation"
+      - "formula"
+      - "math problem"
+      - "number"
+      - "plus"
+      - "minus"
+      - "divided by"
+      - "times"
+      - "squared"
+
+  planning:
+    emoji: 📋
+    temperature: 0.5
+    description: "Strategic planning and organization"
+    system_prompt: |
+      You are a Planning agent that excels at organizing tasks and creating structured plans.
+      Break down goals into actionable steps with clear objectives and timelines.
+      Consider dependencies, resources, and potential obstacles in your plans.
+      Create clear, structured, actionable plans that are easy to follow.
+    tools:
+      - task_breaker
+      - timeline_creator
+      - dependency_analyzer
+    detector_patterns:
+      - "plan"
+      - "organize"
+      - "steps to"
+      - "how to achieve"
+      - "strategy for"
+      - "roadmap"
+      - "schedule"
+      - "project plan"
+
+  graph:
+    emoji: 🕸️
+    temperature: 0.4
+    description: "Network and relationship-based reasoning"
+    system_prompt: |
+      You are a Graph Reasoning agent that specializes in analyzing relationships and networks.
+      Identify connections, patterns, and structures in complex information.
+      Map out relationships in a clear, structured way to reveal insights.
+      Consider direct and indirect connections in your analysis.
+    tools:
+      - graph_creator
+      - relationship_mapper
+      - network_analyzer
+    detector_patterns:
+      - "connection between"
+      - "related to"
+      - "network of"
+      - "map the relationships"
+      - "how does it connect"
+      - "graph"
+      - "relationship"
+      - "links between"
+
+  react:
+    emoji: 🔄
+    temperature: 0.6
+    description: "Reasoning with action capabilities"
+    system_prompt: |
+      You are a ReAct agent that alternates between reasoning and taking actions.
+      Think step by step about what tools you need to use to solve a problem.
+      Use tools strategically to gather information and perform operations.
+      Explain your reasoning before and after each tool use.
+    tools:
+      - calculator
+      - search
+      - code_executor
+      - web_browse
+      - weather
+    detector_patterns:
+      - "find out"
+      - "look up"
+      - "check"
+      - "search and tell me"
+      - "find and explain"
+      - "research"
+      - "investigate"
+
+# Workflow templates for multi-step reasoning
+workflows:
+  research_report:
+    description: "Generate a comprehensive research report on a topic"
+    steps:
+      - agent: planning
+        task: "Create a research plan with key questions to investigate"
+      - agent: rag
+        task: "Gather factual information according to the research plan"
+      - agent: sequential
+        task: "Analyze and synthesize the gathered information"
+      - agent: knowledge
+        task: "Format findings into a comprehensive report"
+
+  creative_story:
+    description: "Generate a creative story with factual elements"
+    steps:
+      - agent: rag
+        task: "Gather factual information about the requested setting/topic"
+      - agent: planning
+        task: "Create a story outline with plot points"
+      - agent: creative
+        task: "Write the creative story integrating factual elements"
+
+  problem_solving:
+    description: "Solve complex problems with multiple aspects"
+    steps:
+      - agent: sequential
+        task: "Break down the problem into components"
+      - agent: calculation
+        task: "Perform any mathematical calculations needed"
+      - agent: react
+        task: "Use tools to gather additional information if needed"
+      - agent: sequential
+        task: "Synthesize all information into a comprehensive solution" 

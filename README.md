@@ -1,6 +1,6 @@
 # Discord AI Chatbot 🤖
 
-A powerful Discord bot powered by advanced AI models, offering conversational capabilities, image generation, OCR, research assistance, and much more.
+A powerful Discord bot powered by advanced AI models, offering conversational capabilities, research assistance, and much more.
 
 ## Table of Contents
 - [Features](#features)
@@ -8,6 +8,7 @@ A powerful Discord bot powered by advanced AI models, offering conversational ca
 - [Installation Guide](#installation-guide)
 - [Configuration Options](#configuration-options)
 - [Core Capabilities](#core-capabilities)
+- [Service Architecture](#service-architecture)
 - [Advanced Usage](#advanced-usage)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
@@ -22,12 +23,6 @@ A powerful Discord bot powered by advanced AI models, offering conversational ca
 - **Streaming Responses**: Watch responses appear in real-time as they're generated for a more interactive experience.
 - **Memory System**: Remembers previous conversations for more contextual interactions.
 
-### Image Capabilities 🎨
-- **Image Generation**: Create stunning AI-generated images from text descriptions using multiple models.
-- **OCR (Text Extraction)**: Extract text from images and screenshots.
-- **Image Analysis**: Detailed descriptions and analysis of uploaded images.
-- **Multiple Generation Styles**: Choose from various image generation models and styles.
-
 ### Agent System 🧠
 - **Web Search**: Search the internet for real-time information using DuckDuckGo with fallback mechanisms.
 - **Research Assistant**: Deep research on topics with multiple sources.
@@ -36,40 +31,45 @@ A powerful Discord bot powered by advanced AI models, offering conversational ca
 - **Knowledge Base**: Store and retrieve server-specific information.
 
 ### User Experience 🌟
-- **Customizable Preferences**: Each user can configure their own experience including response length, voice mode, and more.
-- **Voice Responses**: The bot can respond with voice messages using text-to-speech.
+- **Customizable Preferences**: Each user can configure their own experience including response length and more.
 - **Multilingual Interface**: The bot's commands and responses adapt to your language settings.
 - **Channel-Specific Control**: Enable/disable the bot in specific channels.
 
 ## Commands
 
-### Core Commands
-- `/help` - Display all available commands
-- `/toggleactive` - Enable/disable the bot in the current channel
-- `/toggledm` - Enable/disable direct message functionality
-- `/preferences` - Set your personal preferences for interactions with the bot
-
-### AI Conversation
+### Natural Language Interaction
+No commands needed for most interactions! Simply:
 - **Direct Mentions**: `@BotName [your message]` - Talk directly to the bot
-- **Keywords**: Using configured trigger words in messages to activate the bot
-- **Replies**: Reply to the bot's messages to continue the conversation
+- **Using Bot's Name**: `Hey Bot, [your message]` - The bot recognizes when you use its name
+- **Keyword Triggers**: Use configured trigger words like "assistant" or "ai" in messages
+- **Replies**: Reply to the bot's messages to continue conversations
 
-### Image Commands
-- `/analyze-image [image]` - Analyze and describe an uploaded image
-- `/ocr [image]` - Extract text from an image
-- `/generate [prompt]` - Generate a single image from a description
-  - Options: `style` (model selection), `enhance` (improve prompt)
-- `/imagine [prompt]` - Generate multiple images from a description
-  - Options: `count` (1-4 images), `public` (visibility setting)
+### User Settings
+- **Reasoning Mode**: `Set my reasoning mode to sequential` or `Use creative mode for my questions`
+- **Workflow Mode**: `Enable workflow mode` or `Disable workflow mode` (requires LangGraph)
+- **Privacy Controls**: `Clear my data` or `Forget me` to remove your conversation history
+- **Conversation Reset**: `Reset our conversation` or `Start over` to begin fresh
 
-### Agent Commands
-- `/agent [query]` - Use the AI agent to perform complex tasks or answer questions using tools
-- `/research [topic]` - Research a topic in depth using multiple internet sources
-- `/automate [task]` - Get step-by-step guidance for automating complex tasks
+### Standard Commands
+- `/help` - Display information about available features
+- `/clear` - Clear your conversation history and data
+- `/reset` - Reset the current conversation but keep your preferences
+- `/toggleactive` - Toggle the bot active/inactive in the current channel (Admin only)
+- `/toggleinactive` - Toggle the bot inactive/active in the current channel (Admin only)
 
-### Utility Commands
-- `/bonk` - Clear message history for a fresh start
-- `/nekos [category]` - Display random anime-style images in various categories
+### Reasoning Types
+Include these phrases to explicitly request a specific reasoning approach:
+- **Sequential Thinking**: `Think through this step by step: [question]`
+- **Information Retrieval**: `Search for information about [topic]`
+- **Verification**: `Verify whether [claim] is accurate`
+- **Knowledge Base**: `Explain in detail how [topic] works`
+- **Creative Mode**: `Write a creative story about [topic]`
+- **Graph-of-Thought**: `Map the connections between [concepts]`
+- **Multi-Agent**: `Analyze [topic] from multiple perspectives`
+
+### Advanced Features
+Use these natural language requests for specialized functions:
+- **Web Search**: `Search the web for [query]` or `Find recent information about [topic]`
 
 ## Installation Guide
 
@@ -155,97 +155,4 @@ Change the bot's personality by setting `DEFAULT_INSTRUCTION` in config.yml:
 Set the `LANGUAGE` value in config.yml with one of the supported language codes:
 - `en` - English 🇺🇸
 - `es` - Español 🇪🇸
-- `fr` - Français 🇫🇷
-- `de` - Deutsch 🇩🇪
-- `cn` - Chinese 🇨🇳
-- `ru` - Russian 🇷🇺
-- And many more (see the `lang` folder for all options)
-
-## Core Capabilities
-
-### Multi-Modal Processing
-The bot can work with both text and images:
-- Process and analyze images through the `/analyze-image` command
-- Extract text from images with the `/ocr` command
-- Generate images based on descriptions with `/generate` and `/imagine`
-
-### Agent-Based Intelligence
-Powered by LangChain, the bot can:
-- Perform web searches for up-to-date information
-- Access server-specific knowledge bases
-- Get real-time cryptocurrency prices
-- Conduct in-depth research across multiple sources
-- Generate step-by-step automation guides
-
-### Memory and Context Management
-- Maintains conversation history for context
-- Stores user preferences
-- Preserves thread context for organized discussions
-- Summarizes long conversations to stay within token limits
-
-### Adaptive Reasoning System 🧠
-- **Multiple Reasoning Types**: Automatically selects the optimal reasoning approach:
-  - 💬 Conversational - General friendly chat and discussions
-  - 🧠 Sequential - Step-by-step analytical thinking for complex problems
-  - 🔍 RAG - Retrieval-Augmented Generation for information lookup
-  - 📚 Knowledge - In-depth explanations and educational content
-  - ✅ Verification - Fact-checking and validation
-  - 🎨 Creative - Story, art, and creative content generation
-  - 🔢 Calculation - Mathematical operations and computations
-  - 📋 Planning - Strategic planning and organization
-  - 🕸️ Graph - Network and relationship-based reasoning
-  - 👥 Multi-Agent - Multiple perspectives and balanced viewpoints
-  - 🔎 Step-Back - Holistic, big-picture thinking
-  - ⛓️ Chain-of-Thought - Logical progression and causal reasoning
-  - 🔄 ReAct - Action-oriented problem solving
-- **Automatic Detection**: Analyzes queries to select the most appropriate reasoning mode
-- **Context-Aware Transitions**: Smoothly switches between reasoning types based on conversation flow
-- **User Preference**: Remembers individual user reasoning preferences
-
-### Streaming and Voice Responses
-- Watch responses appear in real-time with streaming mode
-- Get voice responses using text-to-speech technology
-
-## Advanced Usage
-
-### Enhancing Bot Responses
-- **Be specific in your queries**: The more specific your request, the better the response
-- **Use the right command**: Different commands are optimized for different tasks
-- **Leverage thread creation**: Ask the bot to "create a thread" for complex or multi-turn conversations
-
-### Image Generation Tips
-- **Be detailed in prompts**: Include style, mood, lighting, and composition details
-- **Use the enhance option**: Enable prompt enhancement for better results
-- **Try different models**: Each model has different strengths (e.g., MidJourney Style XL, DreamShaper, Realistic Vision)
-
-### Agent Usage Tips
-- **Research complex topics**: Use `/research` for in-depth analysis of complex subjects
-- **Automation guidance**: Use `/automate` to get detailed steps for complex tasks
-- **Real-time information**: The agent can search the web for current information
-
-## Troubleshooting
-
-### Common Issues
-- **Bot not responding**: Ensure the bot has proper permissions in your Discord server
-- **Image generation failing**: The service might be experiencing high demand, try again later
-- **Search results outdated**: The bot's internet search capabilities have limitations on freshness
-
-### Performance Optimization
-- Use streaming responses for faster interaction
-- Limit the number of images generated at once
-- Consider using a local model for lower latency if you self-host
-
-## Contributing
-
-Contributions are welcome! Here's how you can help:
-- Report bugs and issues
-- Suggest new features
-- Submit pull requests with improvements
-- Help with documentation and translations
-
----
-
-## Star History
-[![Star History Chart](https://api.star-history.com/svg?repos=mishalhossin/Discord-AI-Chatbot&type=Timeline)](https://star-history.com/#mishalhossin/Discord-AI-Chatbot&Timeline)
-
-### Crafted with Care: Made with lots of love and attention to detail. ❤️
+- `fr`

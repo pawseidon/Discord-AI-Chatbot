@@ -19,6 +19,10 @@ from bot_utilities.fallback_utils import is_offline_mode, record_llm_failure, re
 import httpx
 import urllib.parse
 from bs4 import BeautifulSoup
+import traceback
+
+# NOTE: Avoid importing agent_service here to prevent circular imports
+# Instead, use lazy imports inside methods when needed
 
 load_dotenv()
 
@@ -557,10 +561,22 @@ async def stream_response(messages, model, client):
         yield fallback_msg
 
 async def generate_response(instructions, history, stream=False):
-    global local_client, remote_client
+    """
+    Generate a response using the LLM
     
-    # Update timestamp cache to ensure current date/time information
-    update_timestamp_cache()
+    DEPRECATED: Use agent_service.process_query() instead.
+    This function is maintained for backward compatibility.
+    
+    Args:
+        instructions: System instructions for the model
+        history: Conversation history
+        stream: Whether to stream the response
+        
+    Returns:
+        str: The generated response
+    """
+    # Lazy import to avoid circular dependencies
+    from bot_utilities.services.agent_service import agent_service
     
     # Check if we're in offline mode (LLM unavailable)
     if is_offline_mode():
@@ -587,128 +603,170 @@ async def generate_response(instructions, history, stream=False):
         else:
             return "I'm currently operating in fallback mode due to unavailability of my primary language model. I can only provide basic responses right now."
     
-    # Check if the latest message contains a query that might need real-time information
-    latest_message = history[-1]["content"].lower() if history else ""
+    # Update timestamp cache to ensure current date/time information
+    update_timestamp_cache()
     
-    # Common triggers for real-time information
-    real_time_triggers = [
-        "current price", "bitcoin price", "crypto price",
-        "latest news", "weather in", "what is the price of",
-        "how much is", "stock price", "current event",
-        "today's", "recent", "latest", "now", "current status"
-    ]
+    # Extract the query from history (last user message)
+    query = history[-1]["content"] if history and len(history) > 0 else ""
     
-    # Simple check for real-time queries
-    needs_real_time_info = any(trigger in latest_message for trigger in real_time_triggers)
-    
-    # Additional context from internet search if needed
-    internet_context = ""
-    news_context = ""
-    
-    # Check if this is a news-related query
-    is_news_query, _ = await detect_news_query(latest_message)
-    
-    if is_news_query:
-        # If it's a news query, get relevant news articles
-        news_context = await get_news_context(latest_message)
-        if news_context:
-            print("Found relevant news articles for the query")
-    
-    if needs_real_time_info and internet_access:
-        print("Detected request for real-time information. Performing internet search...")
+    try:
+        # Ensure agent_service is initialized
+        await agent_service.ensure_initialized()
         
-        # Extract relevant search terms by removing bot's name and keeping keywords
-        search_query = latest_message
+        # Create a temporary conversation ID
+        conversation_id = f"temp-{time.time()}"
         
-        # Get bot name and triggers dynamically
-        bot_names, trigger_words = get_bot_names_and_triggers()
+        # Process using agent_service
+        response = await agent_service.process_query(
+            query=query,
+            user_id=None,
+            conversation_id=conversation_id,
+            context={
+                "system_instructions": instructions,
+                "history": history,
+                "current_date": timestamp_cache['current_date'],
+                "current_time": timestamp_cache['current_time'],
+                "current_year": timestamp_cache['current_year'],
+                "current_month": timestamp_cache['current_month'],
+                "current_day": timestamp_cache['current_day'],
+                "stream": stream
+            }
+        )
         
-        # Remove bot name references from the query
-        for name in bot_names:
-            search_query = search_query.replace(name, "").strip()
-        
-        # Check if this is a cryptocurrency price query
-        is_crypto_query = any(term in search_query for term in ["crypto", "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "price of", "how much is"])
-        
-        crypto_terms = ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "doge", "cardano", "ada", "bnb", "xrp", "polkadot", "dot", "avalanche", "avax", "polygon", "matic"]
-        found_crypto = None
-        
-        for crypto in crypto_terms:
-            if crypto in search_query:
-                found_crypto = crypto
-                break
-        
-        if is_crypto_query and found_crypto:
-            print(f"Detected cryptocurrency price query for: {found_crypto}")
-            # Extract just the crypto name for better search
-            for prefix in ["how much is", "what is the price of", "current price of", "price of"]:
-                if prefix in search_query:
-                    search_query = search_query.replace(prefix, "").strip()
+        # Cache the successful response for future fallback
+        if query:
+            cache_successful_response(query, response)
             
-            # Try to get price from CoinGecko API first
-            crypto_price_data = await get_crypto_price(search_query)
+        return response
+    
+    except Exception as e:
+        print(f"Unexpected error in generate_response: {e}")
+        print(f"Stack trace: {traceback.format_exc()}")
+        
+        # Fallback to original implementation if agent_service fails
+        global local_client, remote_client
+        
+        # Legacy code starts here
+        # Check if the latest message contains a query that might need real-time information
+        latest_message = history[-1]["content"].lower() if history else ""
+        
+        # Common triggers for real-time information
+        real_time_triggers = [
+            "current price", "bitcoin price", "crypto price",
+            "latest news", "weather in", "what is the price of",
+            "how much is", "stock price", "current event",
+            "today's", "recent", "latest", "now", "current status"
+        ]
+        
+        # Simple check for real-time queries
+        needs_real_time_info = any(trigger in latest_message for trigger in real_time_triggers)
+        
+        # Additional context from internet search if needed
+        internet_context = ""
+        news_context = ""
+        
+        # Check if this is a news-related query
+        is_news_query, _ = await detect_news_query(latest_message)
+        
+        if is_news_query:
+            # If it's a news query, get relevant news articles
+            news_context = await get_news_context(latest_message)
+            if news_context:
+                print("Found relevant news articles for the query")
+        
+        if needs_real_time_info and internet_access:
+            print("Detected request for real-time information. Performing internet search...")
             
-            if crypto_price_data:
-                # Include current date/time info in the context to make it clear this is current data
-                current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
-                internet_context = f"\n\nHere is current cryptocurrency information as of {current_datetime}:\n{crypto_price_data}\n\nUse this information to provide an up-to-date response about the cryptocurrency price."
-            else:
-                # Fall back to regular search if API fails
-                print(f"Falling back to regular search for: {search_query} price")
-                # Add current date to ensure recent results
-                search_query += f" price today {timestamp_cache['current_year']} {timestamp_cache['current_month']}/{timestamp_cache['current_day']}"
-                internet_results = await search_internet(search_query)
-                if internet_results and "Error performing internet search" not in internet_results:
-                    current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
-                    internet_context = f"\n\nHere is some real-time information from the internet that might help you answer this query as of {current_datetime}:\n{internet_results}\n\nUse this information to provide an up-to-date response about current prices. The current date is {timestamp_cache['current_date']}."
-        else:
-            # Don't do a web search if we already have news context
-            if not news_context:
-                # Extract just the important part for searching
-                # For queries like "how much is X" or "what is the price of X", extract just the X part
+            # Extract relevant search terms by removing bot's name and keeping keywords
+            search_query = latest_message
+            
+            # Get bot name and triggers dynamically
+            bot_names, trigger_words = get_bot_names_and_triggers()
+            
+            # Remove bot name references from the query
+            for name in bot_names:
+                search_query = search_query.replace(name, "").strip()
+            
+            # Check if this is a cryptocurrency price query
+            is_crypto_query = any(term in search_query for term in ["crypto", "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "price of", "how much is"])
+            
+            crypto_terms = ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "doge", "cardano", "ada", "bnb", "xrp", "polkadot", "dot", "avalanche", "avax", "polygon", "matic"]
+            found_crypto = None
+            
+            for crypto in crypto_terms:
+                if crypto in search_query:
+                    found_crypto = crypto
+                    break
+            
+            if is_crypto_query and found_crypto:
+                print(f"Detected cryptocurrency price query for: {found_crypto}")
+                # Extract just the crypto name for better search
                 for prefix in ["how much is", "what is the price of", "current price of", "price of"]:
                     if prefix in search_query:
                         search_query = search_query.replace(prefix, "").strip()
-                        search_query += " price"  # Add "price" to get more relevant results
                 
-                # If it contains multiple phrases with "in", like "weather in New York", keep just that part
-                if "weather in" in search_query:
-                    search_query = "weather in" + search_query.split("weather in")[1].strip()
-                    
-                # Clean up any remaining question marks or other punctuation
-                search_query = search_query.replace("?", "").replace("!", "").strip()
+                # Try to get price from CoinGecko API first
+                crypto_price_data = await get_crypto_price(search_query)
                 
-                # Add current date info for time-sensitive queries
-                if any(term in search_query for term in ["today", "current", "now", "latest"]):
-                    search_query += f" {timestamp_cache['current_date']}"
-                
-                print(f"Searching the internet for: {search_query}")
-                internet_results = await search_internet(search_query)
-                if internet_results and "Error performing internet search" not in internet_results:
+                if crypto_price_data:
+                    # Include current date/time info in the context to make it clear this is current data
                     current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
-                    internet_context = f"\n\nHere is some real-time information from the internet that might help you answer this query:\n{internet_results}\n\nUse this information to provide an up-to-date response. The current date and time is {current_datetime}."
-    
-    # Explicitly add current date/time info to the instructions
-    current_time_info = f"\n\nThe current date and time is {timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC. Today is {timestamp_cache['current_year']}-{timestamp_cache['current_month']:02d}-{timestamp_cache['current_day']:02d}."
-    
-    # Add all context to instructions
-    enhanced_instructions = instructions + current_time_info
-    
-    # Add news context if found
-    if news_context:
-        enhanced_instructions += f"\n\n{news_context}\nUse this real-time news information to provide an up-to-date response about current events."
-    
-    # Add internet context if found
-    if internet_context:
-        enhanced_instructions += internet_context
-    
-    messages = [
-            {"role": "system", "name": "instructions", "content": enhanced_instructions},
-            *history,
-        ]
-    
-    # Prepare to handle potential failures
-    try:
+                    internet_context = f"\n\nHere is current cryptocurrency information as of {current_datetime}:\n{crypto_price_data}\n\nUse this information to provide an up-to-date response about the cryptocurrency price."
+                else:
+                    # Fall back to regular search if API fails
+                    print(f"Falling back to regular search for: {search_query} price")
+                    # Add current date to ensure recent results
+                    search_query += f" price today {timestamp_cache['current_year']} {timestamp_cache['current_month']}/{timestamp_cache['current_day']}"
+                    internet_results = await search_internet(search_query)
+                    if internet_results and "Error performing internet search" not in internet_results:
+                        current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
+                        internet_context = f"\n\nHere is some real-time information from the internet that might help you answer this query as of {current_datetime}:\n{internet_results}\n\nUse this information to provide an up-to-date response about current prices. The current date is {timestamp_cache['current_date']}."
+            else:
+                # Don't do a web search if we already have news context
+                if not news_context:
+                    # Extract just the important part for searching
+                    # For queries like "how much is X" or "what is the price of X", extract just the X part
+                    for prefix in ["how much is", "what is the price of", "current price of", "price of"]:
+                        if prefix in search_query:
+                            search_query = search_query.replace(prefix, "").strip()
+                            search_query += " price"  # Add "price" to get more relevant results
+                    
+                    # If it contains multiple phrases with "in", like "weather in New York", keep just that part
+                    if "weather in" in search_query:
+                        search_query = "weather in" + search_query.split("weather in")[1].strip()
+                        
+                    # Clean up any remaining question marks or other punctuation
+                    search_query = search_query.replace("?", "").replace("!", "").strip()
+                    
+                    # Add current date info for time-sensitive queries
+                    if any(term in search_query for term in ["today", "current", "now", "latest"]):
+                        search_query += f" {timestamp_cache['current_date']}"
+                    
+                    print(f"Searching the internet for: {search_query}")
+                    internet_results = await search_internet(search_query)
+                    if internet_results and "Error performing internet search" not in internet_results:
+                        current_datetime = f"{timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC"
+                        internet_context = f"\n\nHere is some real-time information from the internet that might help you answer this query:\n{internet_results}\n\nUse this information to provide an up-to-date response. The current date and time is {current_datetime}."
+        
+        # Explicitly add current date/time info to the instructions
+        current_time_info = f"\n\nThe current date and time is {timestamp_cache['current_date']} {timestamp_cache['current_time']} UTC. Today is {timestamp_cache['current_year']}-{timestamp_cache['current_month']:02d}-{timestamp_cache['current_day']:02d}."
+        
+        # Add all context to instructions
+        enhanced_instructions = instructions + current_time_info
+        
+        # Add news context if found
+        if news_context:
+            enhanced_instructions += f"\n\n{news_context}\nUse this real-time news information to provide an up-to-date response about current events."
+        
+        # Add internet context if found
+        if internet_context:
+            enhanced_instructions += internet_context
+        
+        messages = [
+                {"role": "system", "name": "instructions", "content": enhanced_instructions},
+                *history,
+            ]
+        
         # Check if we should use remote API (GROQ) or fall back to local model
         use_local_model = config.get('USE_LOCAL_MODEL', False)
         api_key_available = os.environ.get("API_KEY") is not None
@@ -744,204 +802,71 @@ async def generate_response(instructions, history, stream=False):
                     
                 return response.choices[0].message.content
             except Exception as e:
-                print(f"Error with local LLM: {e}")
+                print(f"Error with local model: {e}")
+                print(f"Stack trace: {traceback.format_exc()}")
                 
                 # Record the failure
                 record_llm_failure()
                 
-                # If we get here, try using the fallback
-                if history and len(history) > 0:
-                    last_message = history[-1]["content"]
-                    fallback_response = await get_fallback_response(last_message)
-                    return fallback_response
+                # Retry with remote API if available
+                if api_key_available:
+                    print("Trying remote API as fallback...")
+                    use_local_model = False
+                else:
+                    # Return a fallback response
+                    last_message = history[-1]["content"] if history and len(history) > 0 else ""
+                    return await get_fallback_response(last_message)
                     
-                return "I encountered an error connecting to the local language model. Please make sure LM Studio is running and accessible from WSL."
-        else:
-            # Using remote API with tools
-            print("Using remote LLM (GROQ API)")
+        # Using remote API (GROQ)
+        if not use_local_model:
+            print("Using remote LLM model")
             if remote_client is None:
                 remote_client = get_remote_client()
                 
-            # Double-check if remote_client was created successfully
-            if remote_client is None:
-                print("Failed to create remote client. Falling back to local model.")
-                if local_client is None:
-                    local_client = get_local_client()
-                
-                # If streaming is requested, return a streamed response
-                if stream:
-                    return stream_response(messages, config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'), local_client)
-                
-                try:
-                    print(f"Using local model as fallback")
-                    response = await local_client.chat.completions.create(
-                        model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
-                        messages=messages,
-                        timeout=30.0,  # Add timeout
-                    )
-                    
-                    # Record successful LLM call
-                    record_llm_success()
-                    
-                    # Cache the successful response for future fallback
-                    if history and len(history) > 0:
-                        last_message = history[-1]["content"]
-                        cache_successful_response(last_message, response.choices[0].message.content)
-                        
-                    return response.choices[0].message.content
-                except httpx.TimeoutException as e:
-                    print(f"Timeout error with local LLM: {e}")
-                    record_llm_failure()
-                except httpx.ConnectError as e:
-                    print(f"Connection error with local LLM: {e}")
-                    record_llm_failure()
-                except Exception as e:
-                    print(f"Error with local LLM fallback: {e}")
-                    record_llm_failure()
-                    
-                # If we get here, try using the fallback
-                if history and len(history) > 0:
-                    last_message = history[-1]["content"]
-                    fallback_response = await get_fallback_response(last_message)
-                    return fallback_response
-                    
-                return "I encountered an error connecting to both remote and local language models. Please check your configuration."
-            
-            # If streaming is requested and not using tools, return a streamed response
-            if stream and not needs_real_time_info:
-                print(f"Requesting streaming response from GROQ API model: {config['MODEL_ID']}")
+            # If streaming is requested, return a streamed response
+            if stream:
                 return stream_response(messages, config['MODEL_ID'], remote_client)
-            
-            tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "searchtool",
-                        "description": "Searches the internet.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "The query for search engine",
-                                }
-                            },
-                            "required": ["query"],
-                        },
-                    },
-                }
-            ]
-            
+                
             try:
-                print(f"Requesting response from GROQ API model: {config['MODEL_ID']}")
+                print(f"Using remote model: {config['MODEL_ID']}")
                 response = await remote_client.chat.completions.create(
                     model=config['MODEL_ID'],
-                    messages=messages,        
-                    tools=tools,
-                    tool_choice="auto",
-                    timeout=45.0,  # Add timeout
+                    messages=messages,
                 )
                 
                 # Record successful LLM call
                 record_llm_success()
-                print("Successfully received response from GROQ API")
                 
-                response_message = response.choices[0].message
-                tool_calls = response_message.tool_calls
-
-                if tool_calls:
-                    print("Response includes tool calls - executing them")
-                    available_functions = {
-                        "searchtool": duckduckgotool,
-                    }
-                    messages.append(response_message)
-
-                    for tool_call in tool_calls:
-                        function_name = tool_call.function.name
-                        function_to_call = available_functions[function_name]
-                        function_args = json.loads(tool_call.function.arguments)
-                        function_response = await function_to_call(
-                            query=function_args.get("query")
-                        )
-                        messages.append(
-                            {
-                                "tool_call_id": tool_call.id,
-                                "role": "tool",
-                                "name": function_name,
-                                "content": function_response,
-                            }
-                        )
-                    
-                    # If streaming is requested for the final response
-                    if stream:
-                        print("Streaming final response after tool calls")
-                        return stream_response(messages, config['MODEL_ID'], remote_client)
-                    
-                    print("Requesting second response after tool calls")
-                    second_response = await remote_client.chat.completions.create(
-                        model=config['MODEL_ID'],
-                        messages=messages,
-                        timeout=45.0,  # Add timeout
-                    ) 
-                    
-                    # Cache successful response
-                    if history and len(history) > 0:
-                        last_message = history[-1]["content"]
-                        cache_successful_response(last_message, second_response.choices[0].message.content)
-                        
-                    return second_response.choices[0].message.content
-                
-                # Cache successful response
+                # Cache the successful response for future fallback
                 if history and len(history) > 0:
                     last_message = history[-1]["content"]
-                    cache_successful_response(last_message, response_message.content)
+                    cache_successful_response(last_message, response.choices[0].message.content)
                     
-                return response_message.content
-                
-            except httpx.TimeoutException as e:
-                print(f"Timeout error with remote LLM: {e}")
-                print(f"API Base URL: {config['API_BASE_URL']}")
-                print(f"Model ID: {config['MODEL_ID']}")
-                record_llm_failure()
-                
-                # Try falling back to local model if available
-                if local_client is not None:
-                    try:
-                        print("Trying local model after remote timeout...")
-                        local_response = await local_client.chat.completions.create(
-                            model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
-                            messages=messages,
-                            timeout=30.0,
-                        )
-                        return local_response.choices[0].message.content
-                    except Exception as local_error:
-                        print(f"Local fallback also failed: {local_error}")
-                        
-            except httpx.ConnectError as e:
-                print(f"Connection error with remote LLM: {e}")
-                print(f"API Base URL: {config['API_BASE_URL']}")
-                print(f"Model ID: {config['MODEL_ID']}")
-                record_llm_failure()
-                
+                return response.choices[0].message.content
             except Exception as e:
-                print(f"Error with remote LLM: {e}")
-                print(f"API Base URL: {config['API_BASE_URL']}")
-                print(f"API Key available: {api_key_available}")
-                print(f"Model ID: {config['MODEL_ID']}")
+                print(f"Error with remote model: {e}")
                 
                 # Record the failure
                 record_llm_failure()
                 
-                # If we get here, try using the fallback
-                if history and len(history) > 0:
-                    last_message = history[-1]["content"]
-                    fallback_response = await get_fallback_response(last_message)
-                    return fallback_response
-                    
-                return "I encountered an error connecting to the AI service. Please try again later."
-            
+                # Attempt with local model if available
+                if local_client:
+                    print("Trying local model as fallback...")
+                    try:
+                        response = await local_client.chat.completions.create(
+                            model=config.get('LOCAL_MODEL_ID', 'mistral-nemo-instruct-2407'),
+                            messages=messages,
+                        )
+                        return response.choices[0].message.content
+                    except Exception as local_error:
+                        print(f"Local model fallback also failed: {local_error}")
+                
+                # Get a fallback response from cached/pre-defined responses
+                last_message = history[-1]["content"] if history and len(history) > 0 else ""
+                return await get_fallback_response(last_message)
     except Exception as e:
         print(f"Unexpected error in generate_response: {e}")
+        print(f"Stack trace: {traceback.format_exc()}")
         
         # Use fallback response as a last resort
         if history and len(history) > 0:

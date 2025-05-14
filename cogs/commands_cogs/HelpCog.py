@@ -51,8 +51,8 @@ class HelpCog(commands.Cog):
     async def send_help(self, channel):
         # Create the main help embed
         embed = discord.Embed(
-            title="Bot Features & Context-Aware Reasoning",
-            description="I'm a fully context-aware AI assistant. Just talk to me naturally and I'll automatically detect the most appropriate reasoning mode.",
+            title="Bot Features & Context-Aware AI Assistant",
+            description="I'm a fully context-aware AI assistant. Just talk to me naturally and I'll understand what you need - no commands necessary!",
             color=0x03a64b
         )
         embed.set_thumbnail(url=self.bot.user.avatar.url)
@@ -94,7 +94,7 @@ class HelpCog(commands.Cog):
         embed.add_field(
             name="⚙️ Setting Your Preferences",
             value=(
-                "You can manually select a reasoning mode:\n"
+                "You can control how I respond to you through natural language:\n"
                 "• `Set my reasoning mode to sequential` - Use sequential thinking\n"
                 "• `Change reasoning mode to creative` - Switch to creative mode\n"
                 "• Include the emoji at the start of your message (e.g., 🔍 for search)\n"
@@ -103,41 +103,27 @@ class HelpCog(commands.Cog):
             inline=False
         )
         
-        # Add image generation examples
+        # Add privacy controls
         embed.add_field(
-            name="🎨 Image Generation",
+            name="🔒 Privacy Controls",
             value=(
-                "Ask me to create images with natural language.\n"
-                "Examples:\n"
-                "• `Generate an image of a sunset over mountains`\n"
-                "• `Draw a picture of a cat wearing sunglasses`\n"
-                "• `Imagine a futuristic cityscape`"
+                "You can control your data with these natural language commands:\n"
+                "• `Clear my data` - Remove all your data from my memory\n"
+                "• `Delete my history` - Alternative way to clear your data\n"
+                "• `Forget me` - Remove all your personal information\n"
+                "\nYou can also use the `/clear` command to clear your data"
             ),
             inline=False
         )
         
-        # Add image analysis examples
+        # Add conversation reset option
         embed.add_field(
-            name="🔍 Image Analysis",
+            name="🔄 Conversation Reset",
             value=(
-                "Upload an image with a prompt to analyze it.\n"
-                "Examples:\n"
-                "• `What do you see in this image?` (with attachment)\n"
-                "• `Describe this picture` (with attachment)\n"
-                "• `Extract text from this screenshot` (with attachment)"
-            ),
-            inline=False
-        )
-        
-        # Add voice transcription examples
-        embed.add_field(
-            name="🎙️ Voice Transcription",
-            value=(
-                "Upload a voice message to have it transcribed.\n"
-                "Examples:\n"
-                "• Send a voice message with text `transcribe this`\n"
-                "• Upload voice message and ask `What does this say?`\n"
-                "• Reply to a voice message with `convert to text`"
+                "To start a fresh conversation:\n"
+                "• Say `Reset our conversation` to clear current context\n"
+                "• Use the `/reset` command to reset the current conversation\n"
+                "This keeps your preferences but clears the current conversation context"
             ),
             inline=False
         )
@@ -156,16 +142,15 @@ class HelpCog(commands.Cog):
             inline=False
         )
         
-        # Add additional agent features
+        # Add multi-agent capabilities
         embed.add_field(
-            name="🤖 Additional Features",
+            name="👥 Multi-Agent Capabilities",
             value=(
-                "I can perform many other tasks seamlessly:\n"
-                "• Web searches for current information\n"
-                "• Remember context from previous messages\n"
-                "• Analyze complex topics from multiple perspectives\n"
-                "• Sentiment analysis for text\n"
-                "• And much more - just ask!"
+                "My advanced architecture uses multiple specialized agents working together:\n"
+                "• Agents automatically select the best reasoning approach for your query\n"
+                "• Complex tasks are broken down and delegated to specialized agents\n"
+                "• Agents can access tools like web search, calculators, and more\n"
+                "• Everything happens automatically - just ask your question naturally!"
             ),
             inline=False
         )
@@ -173,7 +158,11 @@ class HelpCog(commands.Cog):
         embed.set_footer(text=f"{current_language['help_footer']}")
         
         await channel.send(embed=embed)
-
+        
+    @commands.hybrid_command(name="help", description="Display help information about the bot")
+    async def help_command(self, ctx):
+        """Display help information about the bot"""
+        await self.send_help(ctx.channel)
 
 async def setup(bot):
     await bot.add_cog(HelpCog(bot))
