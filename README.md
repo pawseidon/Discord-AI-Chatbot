@@ -28,16 +28,6 @@ A powerful Discord bot powered by advanced AI models, offering conversational ca
 - **Image Analysis**: Detailed descriptions and analysis of uploaded images.
 - **Multiple Generation Styles**: Choose from various image generation models and styles.
 
-### Audio & Voice Features 🎙️
-- **Voice Message Transcription**: Automatically transcribe voice messages to text.
-- **Voice Commands**: Use voice messages with text commands for hands-free operation.
-- **Text-to-Speech Responses**: Get voice responses using text-to-speech technology.
-
-### Analytical Features 📊
-- **Sentiment Analysis**: Analyze the emotional tone of messages with detailed breakdowns.
-- **Emotion Detection**: Identify specific emotions in text with confidence ratings.
-- **Contextual Understanding**: The bot understands the emotional context of conversations.
-
 ### Agent System 🧠
 - **Web Search**: Search the internet for real-time information using DuckDuckGo with fallback mechanisms.
 - **Research Assistant**: Deep research on topics with multiple sources.
@@ -54,181 +44,32 @@ A powerful Discord bot powered by advanced AI models, offering conversational ca
 ## Commands
 
 ### Core Commands
-- `/help` - Display all available commands and their descriptions
-- `/toggleactive` - Enable/disable the bot in the current channel (Admin only)
+- `/help` - Display all available commands
+- `/toggleactive` - Enable/disable the bot in the current channel
 - `/toggledm` - Enable/disable direct message functionality
 - `/preferences` - Set your personal preferences for interactions with the bot
-  - Set response length (short, medium, long)
-  - Enable/disable voice responses
-  - Enable/disable rich embeds
-  - Enable/disable streaming responses
-- `/clear` - Clear your conversation history with the bot in the current channel
-- `/toggleoffline` - Toggle offline mode for the bot (Admin only)
 
 ### AI Conversation
 - **Direct Mentions**: `@BotName [your message]` - Talk directly to the bot
-- **Keywords**: Just say any of the trigger words configured in config.yml (default: "hey hand", "okay hand") to activate the bot
-- **Replies**: Reply to any of the bot's messages to continue the conversation with full context
-- **Threads**: The bot maintains separate conversation histories in different threads
+- **Keywords**: Using configured trigger words in messages to activate the bot
+- **Replies**: Reply to the bot's messages to continue the conversation
 
 ### Image Commands
-- `/analyze-image [image]` - Analyze and describe an uploaded image in detail
-- `/ocr [image]` - Extract text from an image (works with screenshots, documents, signs, etc.)
-- `/generate [prompt]` - Generate a single image from a text description
-  - Options: `style` (model selection), `enhance` (improve prompt automatically)
+- `/analyze-image [image]` - Analyze and describe an uploaded image
+- `/ocr [image]` - Extract text from an image
+- `/generate [prompt]` - Generate a single image from a description
+  - Options: `style` (model selection), `enhance` (improve prompt)
 - `/imagine [prompt]` - Generate multiple images from a description
   - Options: `count` (1-4 images), `public` (visibility setting)
-  - Example: `/imagine a magical forest with glowing mushrooms, count:4, public:true`
-
-### Voice & Audio Commands
-- `/transcribe [voice_message]` - Transcribe a voice message to text
-  - Can be used with an uploaded voice file or in reply to a message with a voice attachment
-  - Example: `/transcribe` (in reply to a voice message)
-- **Text Command Transcription**: Add `!transcribe` when sending a voice message to automatically transcribe it
-  - Example: Send a voice message with the text "!transcribe" to get an immediate transcription
-
-### Analytical Commands
-- `/sentiment [text]` - Analyze the sentiment and emotions in a message
-  - Options: `text` (message to analyze), `public` (visibility setting)
-  - Can be used on your own text or in reply to another message
-  - Example: `/sentiment How's everyone doing today?`
-  - Example: `/sentiment` (in reply to a message)
 
 ### Agent Commands
-- `/agent [query]` - Use the AI agent to perform complex tasks using tools
-  - Can search the web, use knowledge bases, and more
-  - Example: `/agent What were the top news stories from yesterday?`
+- `/agent [query]` - Use the AI agent to perform complex tasks or answer questions using tools
 - `/research [topic]` - Research a topic in depth using multiple internet sources
-  - Example: `/research The history and development of quantum computing`
-- `/mcp-agent [query]` - Advanced agent with specialized tools for complex tasks
-  - Example: `/mcp-agent Create a plan for developing a small e-commerce website`
-- `/sequential-thinking [problem]` - Solve complex problems step-by-step with detailed reasoning
-  - Breaks down problems into logical steps and solves each part in sequence
-  - Great for math problems, logic puzzles, or complex reasoning tasks
-  - Example: `/sequential-thinking How would I approach designing a garden for a small backyard?`
+- `/automate [task]` - Get step-by-step guidance for automating complex tasks
 
-### Knowledge Base Commands
-- `/kb-add [name] [content]` - Add information to the server's knowledge base
-- `/kb-search [query]` - Search the server's knowledge base
-- `/kb-delete [name]` - Delete an entry from the knowledge base
-- `/kb-list` - List all entries in the knowledge base
-
-### Fun Commands
-- `/gif [category]` - Get a fun anime-style reaction GIF
-  - Categories include: hug, pat, kiss, dance, etc.
-  - Example: `/gif hug` will send a cute anime hug GIF
-
-## How to Interact with Each Feature
-
-### Regular Conversations
-1. **Starting a conversation**:
-   - Simply mention the bot: `@BotName Hey, how are you today?`
-   - Use a trigger word: `Hey hand, can you explain quantum computing?`
-   - Reply to a previous bot message
-
-2. **Continuing conversations**:
-   - The bot remembers your recent conversation history in the same channel
-   - For a fresh start, use `/clear` to reset the conversation
-
-3. **Customizing your experience**:
-   - Use `/preferences` to set your preferred response length, format, etc.
-   - These settings apply to all your interactions with the bot
-
-### Using Voice Transcription
-1. **Direct transcription**:
-   - Use the `/transcribe` command when uploading a voice message:
-     ```
-     /transcribe [attach voice message]
-     ```
-   - Or reply to a voice message with `/transcribe`
-
-2. **Automatic transcription**:
-   - When sending a voice message, include `!transcribe` in the text field for automatic transcription
-   - The bot will immediately process and transcribe your voice message
-
-3. **Working with transcriptions**:
-   - Transcriptions appear in an embedded format with a link to the original voice message
-   - You can copy the text, reply to it, or use it as input for other commands
-
-### Using Sentiment Analysis
-1. **Analyze any text**:
-   ```
-   /sentiment The service was excellent and I'm very happy with my purchase!
-   ```
-
-2. **Analyze existing messages**:
-   - Reply to any message with `/sentiment` to analyze its emotional content
-   - Make analysis private (default) or public with the `public` option
-
-3. **Understanding results**:
-   - View overall sentiment (positive, negative, neutral)
-   - See detailed emotion breakdown with intensity percentages
-   - Read a summary of the sentiment analysis
-   - Results include confidence ratings to indicate reliability
-
-### Using the Agent for Research
-1. Use `/agent` for quick answers that might require internet search:
-   ```
-   /agent What's the current price of Bitcoin?
-   ```
-
-2. Use `/research` for in-depth information on a topic:
-   ```
-   /research The impact of climate change on ocean ecosystems
-   ```
-   
-3. Use `/sequential-thinking` for problems that need step-by-step reasoning:
-   ```
-   /sequential-thinking How would I approach designing a garden for a small backyard?
-   ```
-   The bot will break down the problem into logical steps and address each part in sequence.
-   
-   The system automatically selects the best reasoning approach:
-   - **Sequential Thinking**: For straightforward problems with clear steps
-   - **Chain-of-Thought**: For more complex problems requiring deeper analysis
-   - **Chain-of-Verification**: For fact-checking and reducing hallucinations
-   - **Graph-of-Thought**: For non-linear problems with multiple perspectives and interconnected concepts
-
-### Generating Images
-1. Quick single image:
-   ```
-   /generate a futuristic city with flying cars and neon lights
-   ```
-
-2. Multiple images with options:
-   ```
-   /imagine a medieval castle on a mountain, count:4, public:true
-   ```
-
-3. For best results with image generation:
-   - Be specific about style, lighting, mood, and composition
-   - Use the `enhance` option to let the AI improve your prompt
-   - Try different models if you don't get the desired result
-
-### Using the Knowledge Base
-1. Add information that you want the bot to remember for your server:
-   ```
-   /kb-add server-rules Our server has the following rules: 1) Be respectful 2) No spam 3) Have fun!
-   ```
-
-2. Later, anyone can retrieve this information:
-   ```
-   /kb-search rules
-   ```
-
-3. The knowledge base is specific to each server, so it's perfect for:
-   - Server rules and guidelines
-   - FAQ information
-   - Team documentation
-   - Project information
-
-### Voice Interaction
-1. Enable voice responses in your preferences:
-   ```
-   /preferences voice_enabled:true
-   ```
-
-2. The bot will now respond with voice messages in addition to text
+### Utility Commands
+- `/bonk` - Clear message history for a fresh start
+- `/nekos [category]` - Display random anime-style images in various categories
 
 ## Installation Guide
 
@@ -242,28 +83,27 @@ A powerful Discord bot powered by advanced AI models, offering conversational ca
 1. **Clone the repository**
    ```bash
    git clone https://github.com/mishalhossin/Discord-AI-Chatbot
-cd Discord-AI-Chatbot
-```
+   cd Discord-AI-Chatbot
+   ```
 
 2. **Install requirements**
    ```bash
-python3.10 -m pip install -r requirements.txt
-```
+   python3.10 -m pip install -r requirements.txt
+   ```
 
 3. **Configure environment variables**
    - Rename `example.env` to `.env`
    - Add your Discord token and Groq API key:
-```
-DISCORD_TOKEN=YOUR_DISCORD_BOT_TOKEN
-API_KEY=YOUR_GROQ_API_KEY
-TAVILY_API_KEY=YOUR_TAVILY_API_KEY_OPTIONAL
-     OPENAI_API_KEY=YOUR_OPENAI_API_KEY_FOR_VOICE_TRANSCRIPTION
-```
+     ```
+     DISCORD_TOKEN=YOUR_DISCORD_BOT_TOKEN
+     API_KEY=YOUR_GROQ_API_KEY
+     TAVILY_API_KEY=YOUR_TAVILY_API_KEY_OPTIONAL
+     ```
 
 4. **Start the bot**
    ```bash
-python main.py
-```
+   python main.py
+   ```
 
 5. **Invite the bot to your server**
    - Use the invite link provided in the console output
@@ -343,6 +183,25 @@ Powered by LangChain, the bot can:
 - Preserves thread context for organized discussions
 - Summarizes long conversations to stay within token limits
 
+### Adaptive Reasoning System 🧠
+- **Multiple Reasoning Types**: Automatically selects the optimal reasoning approach:
+  - 💬 Conversational - General friendly chat and discussions
+  - 🧠 Sequential - Step-by-step analytical thinking for complex problems
+  - 🔍 RAG - Retrieval-Augmented Generation for information lookup
+  - 📚 Knowledge - In-depth explanations and educational content
+  - ✅ Verification - Fact-checking and validation
+  - 🎨 Creative - Story, art, and creative content generation
+  - 🔢 Calculation - Mathematical operations and computations
+  - 📋 Planning - Strategic planning and organization
+  - 🕸️ Graph - Network and relationship-based reasoning
+  - 👥 Multi-Agent - Multiple perspectives and balanced viewpoints
+  - 🔎 Step-Back - Holistic, big-picture thinking
+  - ⛓️ Chain-of-Thought - Logical progression and causal reasoning
+  - 🔄 ReAct - Action-oriented problem solving
+- **Automatic Detection**: Analyzes queries to select the most appropriate reasoning mode
+- **Context-Aware Transitions**: Smoothly switches between reasoning types based on conversation flow
+- **User Preference**: Remembers individual user reasoning preferences
+
 ### Streaming and Voice Responses
 - Watch responses appear in real-time with streaming mode
 - Get voice responses using text-to-speech technology
@@ -361,7 +220,7 @@ Powered by LangChain, the bot can:
 
 ### Agent Usage Tips
 - **Research complex topics**: Use `/research` for in-depth analysis of complex subjects
-- **Automation guidance**: Use `/sequential-thinking` to get detailed steps for complex tasks
+- **Automation guidance**: Use `/automate` to get detailed steps for complex tasks
 - **Real-time information**: The agent can search the web for current information
 
 ## Troubleshooting

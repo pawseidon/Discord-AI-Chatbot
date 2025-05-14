@@ -1,7 +1,7 @@
 ---
 description: 
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 You're always making sure you use up-to date newest technologies based on findings from multiple sources when enhancing our agent and bot.
 

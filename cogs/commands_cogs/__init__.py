@@ -38,6 +38,7 @@ async def get_all_cogs():
         "HelpCog",
         "VoiceCog",
         "SentimentCog",
+        "ReasoningCog",  # New context-aware reasoning cog
         # AiStuffCog is excluded because ImageCog replaces its functionality
     ]
     
