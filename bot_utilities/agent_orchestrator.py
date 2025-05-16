@@ -307,9 +307,14 @@ class AgentOrchestrator:
         
         # Call the LLM to generate thinking
         try:
+            # Create the messages format expected by generate_text
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": thinking_prompt}
+            ]
+            
             response = await self.llm_provider.generate_text(
-                system_prompt=system_prompt,
-                user_prompt=thinking_prompt,
+                messages=messages,
                 temperature=0.7,  # Slightly creative for exploration
                 max_tokens=1000   # Allow for detailed reasoning
             )
@@ -372,10 +377,15 @@ class AgentOrchestrator:
         """
         
         try:
+            # Create the messages format expected by generate_text
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": response_prompt}
+            ]
+            
             # Generate the final response
             response = await self.llm_provider.generate_text(
-                system_prompt=system_prompt,
-                user_prompt=response_prompt,
+                messages=messages,
                 temperature=0.5,  # More focused for final response
                 max_tokens=1000   # Allow for detailed response
             )

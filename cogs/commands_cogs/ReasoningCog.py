@@ -5,6 +5,7 @@ import asyncio
 import re
 from typing import Dict, Any, Optional, List, Tuple
 import time
+import os
 
 # Import services - these are the preferred interfaces
 from bot_utilities.services.agent_service import agent_service
@@ -55,6 +56,9 @@ class ReasoningCog(commands.Cog):
         llm_provider = await get_ai_provider()
         await agent_service.initialize(llm_provider)
         await workflow_service.initialize(llm_provider)
+        
+        # Register services after initialization to avoid circular imports
+        workflow_service.register_services(agent_service=agent_service, memory_service=memory_service)
         
         # Get a reference to the EmojiReactionCog
         for cog in self.bot.cogs.values():
@@ -109,8 +113,8 @@ class ReasoningCog(commands.Cog):
             except Exception as e:
                 print(f"Error in cache cleanup: {e}")
     
-    async def handle_natural_language_command(self, message, content):
-        """Handle natural language commands for reasoning preferences and info"""
+    async def handle_reasoning_commands(self, message, content):
+        """Handle natural language commands related to reasoning modes"""
         guild_id = str(message.guild.id) if message.guild else "DM"
         user_id = str(message.author.id)
         conversation_id = f"{guild_id}:{message.channel.id}"
@@ -136,11 +140,10 @@ class ReasoningCog(commands.Cog):
             "disable workflow mode", "toggle workflow"
         ]
         
-        # Check for clear data requests
-        clear_data_keywords = [
-            "clear my data", "delete my data", "remove my information", "forget me",
-            "clear my history", "erase my data", "delete my history", "forget my data",
-            "remove my data", "clear my cache", "reset my profile"
+        # Check for emoji toggle
+        emoji_keywords = [
+            "disable emojis", "turn off emojis", "hide emojis", "no emojis",
+            "enable emojis", "turn on emojis", "show emojis", "use emojis"
         ]
         
         # Check for reset conversation requests
@@ -156,10 +159,18 @@ class ReasoningCog(commands.Cog):
                 await self.reset_current_conversation(message, conversation_id)
                 return True
         
-        # Process clear data request
-        for keyword in clear_data_keywords:
+        # Process emoji toggle
+        for keyword in emoji_keywords:
             if keyword.lower() in content.lower():
-                await self.clear_user_data(message, user_id)
+                disable = any(word in keyword.lower() for word in ["disable", "turn off", "hide", "no"])
+                
+                # Update user preference
+                await memory_service.set_user_preference(user_id, "disable_emojis", disable)
+                
+                if disable:
+                    await message.reply("I've disabled emojis in my responses.")
+                else:
+                    await message.reply("I've enabled emojis in my responses.")
                 return True
         
         # Process workflow mode toggle
@@ -460,6 +471,86 @@ class ReasoningCog(commands.Cog):
             error_traceback = traceback.format_exc()
             print(f"Error resetting conversation: {error_traceback}")
             await message.reply(f"❌ I encountered an error while resetting our conversation: {str(e)[:1500]}")
+
+    @commands.command(name="test_reasoning")
+    @commands.is_owner()  # Restrict to bot owner
+    async def test_reasoning(self, ctx, category=None, num_queries: int = 1):
+        """
+        Test the performance of different reasoning types
+        
+        Args:
+            category: Category of test queries to use (factual, analytical, creative, etc.)
+            num_queries: Number of queries to test per category
+        """
+        # Import the ReasoningTester
+        from bot_utilities.testing_utils import ReasoningTester
+        from bot_utilities.services.agent_service import agent_service
+        
+        # Validate input
+        if num_queries < 1:
+            num_queries = 1
+        elif num_queries > 3:
+            await ctx.send("⚠️ Testing more than 3 queries may take a long time. Limiting to 3.")
+            num_queries = 3
+            
+        if category and not category.lower() in ["factual", "analytical", "creative", "mathematical", "planning", "current_events"]:
+            await ctx.send("⚠️ Unknown category. Available categories: factual, analytical, creative, mathematical, planning, current_events")
+            category = None
+        
+        # Initialize tester
+        tester = ReasoningTester(agent_service)
+        
+        # Inform user
+        test_message = await ctx.send(f"🧪 Running reasoning tests on {num_queries} queries per category... This may take several minutes.")
+        
+        try:
+            # Run reduced test by default (only a few reasoning types)
+            reasoning_types = ["sequential", "rag", "conversational", "creative", "calculation", "multi_agent"]
+            
+            # Run tests
+            results = await tester.run_test_battery(
+                category=category.lower() if category else None, 
+                num_queries=num_queries,
+                reasoning_types=reasoning_types
+            )
+            
+            # Update message
+            await test_message.edit(content=f"✅ Tests completed! Analyzing results...")
+            
+            # Analyze results
+            analysis = await ReasoningTester.analyze_results()
+            
+            # Send key findings
+            message = "**Reasoning Test Results**\n\n"
+            
+            message += "**Best Performing Reasoning Types:**\n"
+            for cat, reasoning_type in analysis["best_performers"].items():
+                message += f"- {cat.title()}: {reasoning_type}\n"
+            
+            if analysis["similar_reasoning_types"]:
+                message += "\n**Similar Reasoning Types:**\n"
+                for similar in analysis["similar_reasoning_types"]:
+                    message += f"- {' and '.join(similar['types'])}\n"
+            
+            message += "\n**Recommendations:**\n"
+            for recommendation in analysis["recommendations"]:
+                message += f"- {recommendation}\n"
+                
+            # Send results
+            await ctx.send(message)
+            
+            # Notify about test file
+            files = os.listdir(os.path.join("bot_data", "testing"))
+            test_files = [f for f in files if f.startswith("reasoning_test_")]
+            test_files.sort(reverse=True)
+            latest_file = test_files[0] if test_files else "No test file found"
+            
+            await ctx.send(f"📁 Detailed test results saved to: `bot_data/testing/{latest_file}`")
+            
+        except Exception as e:
+            await test_message.edit(content=f"❌ Error during testing: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
 async def setup(bot):
     await bot.add_cog(ReasoningCog(bot)) 

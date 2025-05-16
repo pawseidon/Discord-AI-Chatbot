@@ -59,18 +59,6 @@ Robust agents must detect and recover from uncertainty or failures. Key strategi
 
 By combining confidence thresholds with fallback paths, the system avoids propagating errors. For example: *“If the Verification agent cannot confirm the RAG answer, it returns a `goto='fallback_agent'` command instead of the final answer”*.
 
-## Frameworks & Libraries
-
-Choosing a framework helps manage complexity. Notable Python frameworks for multi-agent workflows include:
-
-| Framework                                                                                                  | Key Features                                                                                                                          | Notes                                                                                        |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **LangChain (LangGraph)**                                                                                  | Graph-based multi-agent flows, built-in memory, integration with LangSmith for monitoring, support for custom state graphs and tools. | Good for explicit agent graphs; some memory quirks reported.                                 |
-| **Microsoft AutoGen**                                                                                      | Chat-based multi-agent system, dynamic orchestration, tool and memory integration, allows complex async chat between agents.          | Procedural coding style (no built-in graph DSL), strong for custom flows, good tool support. |
-| **CrewAI**                                                                                                 | Agent/task abstraction (Agent, Crew, Task), built-in state management and memory concepts, good for concurrency.                      | Seamless coordination; logging can be tricky.                                                |
-| **OpenAI Agents SDK**                                                                                      | Lightweight orchestration primitives, supports planner/executor paradigm.                                                             | In early stages; useful for simple multi-agent patterns.                                     |
-| **Simple frameworks**:   Or use custom orchestration (e.g. `asyncio`, `celery`) if you prefer flexibility. |                                                                                                                                       |                                                                                              |
-
 LangGraph (LangChain) provides a high-level DAG abstraction (nodes = agents, edges = handoffs) and handles short/long-term memory. AutoGen is another popular choice for building teams of chat agents (it uses OpenAI chat models under the hood). CrewAI offers an out-of-the-box task framework but has different abstractions (Agents/Crews). The best choice depends on your needs – e.g., LangGraph is great if you want visualizable workflows, while AutoGen might offer lower-level control.
 
 ## Prompt Engineering & Transitions
@@ -105,17 +93,6 @@ By carefully engineering prompts, you ensure the transition between agents is sm
 
 ## Agent Message Passing (Example Table)
 
-| **Agent**     | **Role/Task**                           | **Input/Output**                                                                   |
-| ------------- | --------------------------------------- | ---------------------------------------------------------------------------------- |
-| Router        | Detect query type (RAG vs math vs etc.) | In: User message<br>Out: Decision token (e.g. `mode="RAG"`)                        |
-| RAG Agent     | Retrieve & answer factual queries       | In: Query text, maybe user history<br>Out: Answer text, sources, confidence        |
-| SeqAgent      | Stepwise logic (calcs/plans)            | In: Query or subtask, context state<br>Out: Step-by-step reasoning + result        |
-| CreativeAgent | Generate open-ended responses           | In: Query/theme<br>Out: Creative content (e.g. story, analogy)                     |
-| VerifyAgent   | Fact-check an answer                    | In: Answer text<br>Out: Verdict (correct/incorrect), corrections, confidence       |
-| FallbackAgent | Handle errors or unclear cases          | In: Failure reason or raw query<br>Out: Clarifying question or safe default answer |
-
-Each arrow between agents is managed by your orchestrator code. For example, after the RAG Agent outputs an answer, the orchestrator passes that answer as input to the VerifyAgent (if in the workflow), before finally posting back to the user.
-
 ## Integration Tips
 
 * **Memory**: Use vector searches to recall relevant past info or knowledge. For example, on each query embed the user message and retrieve similar past queries/answers to inform the response. Libraries like LangChain make this easy.
@@ -140,15 +117,6 @@ Design the bot as a **modular multi-agent system**, with each "agent" (or reason
 
 * **Agent Components:** Each agent is defined by (1) a **system instruction** (persona, goals, constraints, tool access, output format), (2) a **context** (conversation history, user profile, tool outputs, retrieved knowledge), and (3) a **query** (the current task or sub-question).  This mirrors cognitive architectures: an LLM as "reasoning engine" with memory and tools.
 
-<table>
-<thead><tr><th>Orchestration Pattern</th><th>Description</th><th>Example/Benefit</th></tr></thead>
-<tbody>
-<tr><td>Single-Agent (ReAct)</td><td>One LLM loop alternates reasoning and acting (CoT & tool use):contentReference[oaicite:18]{index=18}.</td><td>Good for focused tasks (QA, coding) with self-reflection. Low overhead.</td></tr>
-<tr><td>Multi-Agent – Supervisor</td><td>Dedicated planning agent breaks tasks; routes to specialist agents:contentReference[oaicite:19]{index=19}:contentReference[oaicite:20]{index=20}.</td><td>Scales to complex, heterogeneous tasks. Supervisor ensures sub-task delegation.</td></tr>
-<tr><td>Multi-Agent – Network</td><td>Agents communicate peer-to-peer or via shared memory; any agent can call any other:contentReference[oaicite:21]{index=21}.</td><td>Fully flexible, but complex. Useful when tasks require fluid collaboration.</td></tr>
-<tr><td>Hierarchical Teams</td><td>Supervisors-of-supervisors: layered control for very complex workflows:contentReference[oaicite:22]{index=22}.</td><td>Organizes large teams of agents. Each sub-team has its own coordinator.</td></tr>
-</tbody>
-</table>
 
 ## Reasoning Mode Selection
 

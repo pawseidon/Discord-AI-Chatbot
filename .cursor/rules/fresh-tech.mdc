@@ -5,6 +5,6 @@ alwaysApply: false
 ---
 You're always making sure you use up-to date newest technologies based on findings from multiple sources when enhancing our agent and bot.
 
-make sure you compare compatibility of each and every enhancement in [enhancements.md](mdc:enhancements.md) and that you go through each and every resource to learn about what can we do with our bot.
+make sure you compare compatibility of each and every enhancements and that you go through each and every resource to learn about what can we do with our bot.
 
 based on these resources and suggestions implement something that could help our bot, make sure you review whole codebase and delete all illogical solutions, when asked bot with a prompt on some specific problem the bot didn't check my prompt but some json file and it was checking in which channel it is and completely random bs, make sure you create absolutely best bot ever

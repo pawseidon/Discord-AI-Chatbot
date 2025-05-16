@@ -27,9 +27,6 @@ TRIGGER:
   - "%BOT_NAME%"
   - "%BOT_NICKNAME%"
   - "%BOT_USERNAME%"
-  - chatbot
-  - assistant
-  - ai
 # Define the triggers that the bot should always respond to when in message
 
 AUTO_SHARDING: true

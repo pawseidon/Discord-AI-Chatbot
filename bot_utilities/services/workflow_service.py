@@ -44,6 +44,19 @@ class WorkflowService:
         }
         self._initialized = False
         self._conversation_contexts = {}  # Local storage for conversation context
+        self.agent_service_instance = None
+        self.memory_service_instance = None
+        
+    def register_services(self, agent_service=None, memory_service=None):
+        """
+        Register external services for use by the workflow service
+        
+        Args:
+            agent_service: The agent service instance
+            memory_service: The memory service instance
+        """
+        self.agent_service_instance = agent_service
+        self.memory_service_instance = memory_service
         
     async def initialize(self, llm_provider=None):
         """
@@ -118,7 +131,9 @@ class WorkflowService:
                                    user_id: str,
                                    conversation_id: str = None,
                                    workflow_type: str = None,
-                                   update_callback: Callable = None) -> str:
+                                   update_callback: Callable = None,
+                                   search_results: str = None,
+                                   display_raw_results: bool = False) -> str:
         """
         Process a query using a specific workflow
         
@@ -128,6 +143,8 @@ class WorkflowService:
             conversation_id: Optional conversation ID 
             workflow_type: Optional workflow type to use (otherwise autodetected)
             update_callback: Optional callback for streaming updates
+            search_results: Optional pre-fetched search results to use
+            display_raw_results: Whether to display raw search results to the user
             
         Returns:
             str: The response from the workflow
@@ -152,6 +169,14 @@ class WorkflowService:
                 if guild_id == "DM":
                     target_user_id = channel_id
             
+            # Create a context object with search results if provided
+            context = {}
+            if search_results:
+                context["search_results"] = search_results
+                
+            # Include display_raw_results flag in context
+            context["display_raw_results"] = display_raw_results
+            
             # Call the appropriate workflow handler
             if workflow_type in self.workflows:
                 workflow_handler = self.workflows[workflow_type]
@@ -159,7 +184,8 @@ class WorkflowService:
                     query=query,
                     user_id=user_id,
                     conversation_id=conversation_id,
-                    update_callback=update_callback
+                    update_callback=update_callback,
+                    **context  # Pass search_results and display_raw_results as part of the context
                 )
             else:
                 # Default to multi-agent workflow
@@ -167,7 +193,8 @@ class WorkflowService:
                     query=query,
                     user_id=user_id,
                     conversation_id=conversation_id,
-                    update_callback=update_callback
+                    update_callback=update_callback,
+                    **context  # Pass search_results and display_raw_results as part of the context
                 )
                 
         except Exception as e:
@@ -179,7 +206,9 @@ class WorkflowService:
                                      query: str,
                                      user_id: str,
                                      conversation_id: str = None,
-                                     update_callback: Callable = None) -> str:
+                                     update_callback: Callable = None,
+                                     search_results: str = None,
+                                     display_raw_results: bool = False) -> str:
         """
         Process a query using the Sequential + RAG workflow
         This workflow is ideal for educational content and detailed explanations
@@ -189,6 +218,8 @@ class WorkflowService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID
             update_callback: Optional callback for streaming updates
+            search_results: Optional pre-fetched search results to use
+            display_raw_results: Whether to display raw search results to the user
             
         Returns:
             str: The final response
@@ -204,13 +235,24 @@ class WorkflowService:
         if update_callback:
             await update_callback("thinking", {"thinking": "Retrieving information about topics and connections..."})
             
-        rag_results = await agent_service.search_web(query)
+        # Use pre-fetched search results if provided
+        rag_results = search_results
+        
+        # If no pre-fetched results, perform the search
+        if not rag_results:
+            # Use registered agent service if available, otherwise use imported instance
+            if self.agent_service_instance is not None:
+                rag_results = await self.agent_service_instance.search_web(query)
+            else:
+                rag_results = await agent_service.search_web(query)
         
         # Create a context object with the RAG results
         context = {
             "retrieved_information": rag_results,
             "user_id": user_id,
-            "conversation_id": conversation_id
+            "conversation_id": conversation_id,
+            "display_raw_results": display_raw_results,
+            "interleaved_format": True  # Enable interleaved format for clear revision visibility
         }
         
         # Notify about switching to sequential thinking mode
@@ -220,23 +262,24 @@ class WorkflowService:
                 "is_combined": False
             })
             
-        # Step 2: Process with sequential thinking to organize and explain information
+        # Inform user about sequential thinking with revisions
         if update_callback:
-            await update_callback("thinking", {"thinking": "Organizing information into a logical explanation..."})
+            await update_callback("thinking", {"thinking": "Organizing information into a logical explanation with thought revision..."})
             
         success, response = await sequential_thinking_service.sequential_thinking_service.process_sequential_thinking(
             problem=query,
             context=context,
             prompt_style="sequential",
-            num_thoughts=5,
-            temperature=0.3,
             enable_revision=True,
-            enable_reflection=False,
             session_id=f"session_{user_id}_{conversation_id}"
         )
         
         # Format as a combined RAG + Sequential response
         formatted_response = f"🌐📚 **Sequential Explanation Based on Retrieved Information**\n\n{response}"
+        
+        # Add raw search results if requested
+        if display_raw_results and rag_results:
+            formatted_response += f"\n\n**Raw Search Results:**\n```\n{rag_results[:1000]}{'...' if len(rag_results) > 1000 else ''}\n```"
         
         return formatted_response
     
@@ -244,7 +287,9 @@ class WorkflowService:
                                        query: str,
                                        user_id: str,
                                        conversation_id: str = None,
-                                       update_callback: Callable = None) -> str:
+                                       update_callback: Callable = None,
+                                       search_results: str = None,
+                                       display_raw_results: bool = False) -> str:
         """
         Process a query using the Verification + RAG + Sequential workflow
         This workflow is ideal for fact-checking and verifying information
@@ -254,6 +299,8 @@ class WorkflowService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID
             update_callback: Optional callback for streaming updates
+            search_results: Optional pre-fetched search results to use
+            display_raw_results: Whether to display raw search results to the user
             
         Returns:
             str: The final response
@@ -269,7 +316,16 @@ class WorkflowService:
         if update_callback:
             await update_callback("thinking", {"thinking": "Retrieving information from multiple sources..."})
             
-        rag_results = await agent_service.search_web(query, num_results=5)
+        # Use pre-fetched search results if provided
+        rag_results = search_results
+        
+        # If no pre-fetched results, perform the search
+        if not rag_results:
+            # Use registered agent service if available, otherwise use imported instance
+            if self.agent_service_instance is not None:
+                rag_results = await self.agent_service_instance.search_web(query, num_results=5)
+            else:
+                rag_results = await agent_service.search_web(query, num_results=5)
         
         # Step 2: Verify the information with fact checking
         if update_callback:
@@ -313,19 +369,19 @@ class WorkflowService:
             "retrieved_information": rag_results,
             "verification_results": verification_response,
             "user_id": user_id,
-            "conversation_id": conversation_id
+            "conversation_id": conversation_id,
+            "display_raw_results": display_raw_results,
+            "interleaved_format": True  # Enable interleaved format for clear revision visibility
         }
         
         # Process with sequential thinking
         if update_callback:
-            await update_callback("thinking", {"thinking": "Organizing verified information into a coherent response..."})
+            await update_callback("thinking", {"thinking": "Organizing verified information with thought revision and critical analysis..."})
             
         success, sequential_response = await sequential_thinking_service.sequential_thinking_service.process_sequential_thinking(
             problem=f"Create a well-organized response to the query: {query}",
             context=context,
             prompt_style="cov",  # Chain of verification
-            num_thoughts=4,
-            temperature=0.3,
             enable_revision=True,
             session_id=f"session_{user_id}_{conversation_id}"
         )
@@ -333,13 +389,19 @@ class WorkflowService:
         # Format the final response
         formatted_response = f"🧪📚 **Verified Information**\n\n{sequential_response}"
         
+        # Add raw search results if requested
+        if display_raw_results and rag_results:
+            formatted_response += f"\n\n**Raw Search Results:**\n```\n{rag_results[:1000]}{'...' if len(rag_results) > 1000 else ''}\n```"
+        
         return formatted_response
     
     async def calculation_sequential_workflow(self,
                                             query: str,
                                             user_id: str,
                                             conversation_id: str = None,
-                                            update_callback: Callable = None) -> str:
+                                            update_callback: Callable = None,
+                                            search_results: str = None,
+                                            display_raw_results: bool = False) -> str:
         """
         Process a query using the Calculation + Sequential workflow
         This workflow combines precise mathematical operations with step-by-step explanations
@@ -349,6 +411,8 @@ class WorkflowService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID
             update_callback: Optional callback for streaming updates
+            search_results: Optional pre-fetched search results to use
+            display_raw_results: Whether to display raw calculation results
             
         Returns:
             str: The final response
@@ -417,8 +481,7 @@ class WorkflowService:
             problem=f"Explain how to solve this mathematical problem step by step: {expression}",
             context=context,
             prompt_style="sequential",
-            num_thoughts=4,
-            temperature=0.3,
+            enable_revision=True,
             session_id=f"session_{user_id}_{conversation_id}"
         )
         
@@ -440,7 +503,9 @@ class WorkflowService:
                                          query: str,
                                          user_id: str,
                                          conversation_id: str = None,
-                                         update_callback: Callable = None) -> str:
+                                         update_callback: Callable = None,
+                                         search_results: str = None,
+                                         display_raw_results: bool = False) -> str:
         """
         Process a query using the Creative + Sequential workflow
         This workflow combines creative content generation with structured organization
@@ -450,6 +515,8 @@ class WorkflowService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID
             update_callback: Optional callback for streaming updates
+            search_results: Optional pre-fetched search results to use
+            display_raw_results: Whether to display raw creative ideas
             
         Returns:
             str: The final response
@@ -504,8 +571,7 @@ class WorkflowService:
             problem=f"Organize and structure these creative ideas into a cohesive response: {query}",
             context=context,
             prompt_style="sequential",
-            num_thoughts=4,
-            temperature=0.4,
+            enable_revision=True,
             session_id=f"session_{user_id}_{conversation_id}"
         )
         
@@ -518,7 +584,9 @@ class WorkflowService:
                                             query: str,
                                             user_id: str,
                                             conversation_id: str = None,
-                                            update_callback: Callable = None) -> str:
+                                            update_callback: Callable = None,
+                                            search_results: str = None,
+                                            display_raw_results: bool = False) -> str:
         """
         Process a query using the Graph + RAG + Verification workflow
         This workflow maps relationships between entities with verified information
@@ -528,6 +596,8 @@ class WorkflowService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID
             update_callback: Optional callback for streaming updates
+            search_results: Optional pre-fetched search results to use
+            display_raw_results: Whether to display raw search results
             
         Returns:
             str: The final response
@@ -543,7 +613,16 @@ class WorkflowService:
         if update_callback:
             await update_callback("thinking", {"thinking": "Retrieving information about topics and connections..."})
             
-        rag_results = await agent_service.search_web(query)
+        # Use pre-fetched search results if provided
+        rag_results = search_results
+        
+        # If no pre-fetched results, perform the search
+        if not rag_results:
+            # Use registered agent service if available, otherwise use imported instance
+            if self.agent_service_instance is not None:
+                rag_results = await self.agent_service_instance.search_web(query)
+            else:
+                rag_results = await agent_service.search_web(query)
         
         # Extract key entities and relationships from RAG results
         # ... existing code ...
@@ -620,13 +699,19 @@ class WorkflowService:
 This graph represents the verified relationships between entities based on the information retrieved.
 """
         
+        # Add raw search results if requested
+        if display_raw_results and rag_results:
+            formatted_response += f"\n\n**Raw Search Results:**\n```\n{rag_results[:1000]}{'...' if len(rag_results) > 1000 else ''}\n```"
+        
         return formatted_response
     
     async def multi_agent_workflow(self,
                                   query: str,
                                   user_id: str,
                                   conversation_id: str = None,
-                                  update_callback: Callable = None) -> str:
+                                  update_callback: Callable = None,
+                                  search_results: str = None,
+                                  display_raw_results: bool = False) -> str:
         """
         Process a query using the flexible Multi-Agent workflow
         
@@ -638,16 +723,25 @@ This graph represents the verified relationships between entities based on the i
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID
             update_callback: Optional callback for streaming updates
+            search_results: Optional pre-fetched search results to use
+            display_raw_results: Whether to display raw search results
             
         Returns:
             str: The final response
         """
         # Detect multiple reasoning types to use
-        reasoning_types = await agent_service.detect_multiple_reasoning_types(
-            query=query, 
-            conversation_id=conversation_id,
-            max_types=3
-        )
+        if self.agent_service_instance is not None:
+            reasoning_types = await self.agent_service_instance.detect_multiple_reasoning_types(
+                query=query, 
+                conversation_id=conversation_id,
+                max_types=3
+            )
+        else:
+            reasoning_types = await agent_service.detect_multiple_reasoning_types(
+                query=query, 
+                conversation_id=conversation_id,
+                max_types=3
+            )
         
         # Ensure we have at least two reasoning types
         if len(reasoning_types) < 2:
@@ -683,6 +777,14 @@ This graph represents the verified relationships between entities based on the i
             thinking_text += f"Approach:\n{workflow_plan}"
             await update_callback("thinking", {"thinking": thinking_text})
             
+        # Pass search results to the primary reasoning if it's RAG type
+        enriched_context = {}
+        if search_results and primary_type == "rag":
+            enriched_context["search_results"] = search_results
+            
+        # Add display_raw_results flag to context
+        enriched_context["display_raw_results"] = display_raw_results
+            
         # Step 1: Execute primary reasoning
         if update_callback:
             await update_callback("agent_switch", {"agent_type": primary_type})
@@ -692,7 +794,8 @@ This graph represents the verified relationships between entities based on the i
             user_id=user_id,
             conversation_id=conversation_id,
             reasoning_type=primary_type,
-            update_callback=update_callback
+            update_callback=update_callback,
+            context=enriched_context
         )
         
         # Step 2: Execute secondary reasoning with context from primary
@@ -705,9 +808,14 @@ This graph represents the verified relationships between entities based on the i
         enriched_context = {
             "primary_reasoning_result": primary_response,
             "primary_reasoning_type": primary_type,
-            "reasoning_types": reasoning_types
+            "reasoning_types": reasoning_types,
+            "display_raw_results": display_raw_results
         }
         
+        # Add search results to secondary reasoning if applicable
+        if search_results and secondary_type == "rag":
+            enriched_context["search_results"] = search_results
+            
         # Use a meta-prompt to guide the secondary reasoning based on the primary results
         meta_prompt = self._create_meta_prompt(primary_type, secondary_type, query, primary_response)
         
@@ -759,6 +867,10 @@ This graph represents the verified relationships between entities based on the i
         
         # Format with multi-agent header and prepend reasoning types used
         response_with_header = f"**Multi-Agent Analysis** (using {primary_type.capitalize()} and {secondary_type.capitalize()} reasoning)\n\n{response}"
+        
+        # Add raw search results if requested
+        if display_raw_results and search_results:
+            response_with_header += f"\n\n**Raw Search Results:**\n```\n{search_results[:1000]}{'...' if len(search_results) > 1000 else ''}\n```"
         
         return response_with_header
         
@@ -851,14 +963,46 @@ This graph represents the verified relationships between entities based on the i
         Returns:
             str: The response from the reasoning step
         """
-        # Process using agent service with specific reasoning type
-        response = await agent_service.process_query(
-            query=query,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            reasoning_type=reasoning_type,
-            update_callback=update_callback
-        )
+        # Extract search_results from context if available
+        search_results = None
+        if context and "search_results" in context:
+            search_results = context.get("search_results")
+            
+        # Extract display_raw_results from context if available
+        display_raw_results = False
+        if context and "display_raw_results" in context:
+            display_raw_results = context.get("display_raw_results")
+            
+        # Ensure interleaved_format is set when reasoning_type is sequential
+        if reasoning_type == "sequential" and context:
+            context["interleaved_format"] = True
+            if update_callback:
+                await update_callback("thinking", {"thinking": "Applying sequential thinking with thought revision..."})
+            
+        # Process using registered agent service if available, otherwise use imported instance
+        if self.agent_service_instance is not None:
+            response = await self.agent_service_instance.process_query(
+                query=query,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                reasoning_type=reasoning_type,
+                update_callback=update_callback,
+                search_results=search_results,
+                display_raw_results=display_raw_results,
+                context=context  # Pass the full context to ensure interleaved_format is used
+            )
+        else:
+            # Process using agent service with specific reasoning type
+            response = await agent_service.process_query(
+                query=query,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                reasoning_type=reasoning_type,
+                update_callback=update_callback,
+                search_results=search_results,
+                display_raw_results=display_raw_results,
+                context=context  # Pass the full context to ensure interleaved_format is used
+            )
         
         return response
 
@@ -870,7 +1014,16 @@ This graph represents the verified relationships between entities based on the i
             conversation_id: The conversation ID
             context_data: The context data to store
         """
-        # Try to store in memory service first
+        # Try to store in registered memory service first
+        if self.memory_service_instance is not None:
+            try:
+                if hasattr(self.memory_service_instance, "store_conversation_context"):
+                    await self.memory_service_instance.store_conversation_context(conversation_id, context_data)
+                    return
+            except Exception as e:
+                print(f"Error using memory_service_instance.store_conversation_context: {e}")
+        
+        # Fallback to imported memory service
         try:
             # Check if the memory_service has the store_conversation_context method
             if hasattr(memory_service, "store_conversation_context"):
@@ -896,7 +1049,17 @@ This graph represents the verified relationships between entities based on the i
         Returns:
             The context data
         """
-        # Try to get from memory service first
+        # Try to get from registered memory service first
+        if self.memory_service_instance is not None:
+            try:
+                if hasattr(self.memory_service_instance, "get_conversation_context"):
+                    result = await self.memory_service_instance.get_conversation_context(conversation_id, key)
+                    if result is not None:
+                        return result
+            except Exception as e:
+                print(f"Error using memory_service_instance.get_conversation_context: {e}")
+        
+        # Try to get from imported memory service
         try:
             if hasattr(memory_service, "get_conversation_context"):
                 result = await memory_service.get_conversation_context(conversation_id, key)

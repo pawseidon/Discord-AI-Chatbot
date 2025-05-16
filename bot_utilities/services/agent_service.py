@@ -12,6 +12,8 @@ import discord
 import re
 from enum import Enum, auto
 import traceback
+import time
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -115,114 +117,120 @@ class AgentService:
         update_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         max_steps: int = 5,
         context: Optional[Dict[str, Any]] = None,
-        channel_id: str = None
+        channel_id: str = None,
+        search_results: str = None,
+        display_raw_results: bool = False
     ) -> str:
         """
-        Process a user query using the agent orchestration system
+        Process a user query, adding search results to the history. This is the main entry point for
+        processing user queries.
         
         Args:
-            query: The user's query to process
-            user_id: The ID of the user making the query
-            conversation_id: The ID of the conversation
-            reasoning_type: Optional specific reasoning type to use
-            update_callback: Optional callback for status updates during processing
-            max_steps: Maximum number of processing steps (delegations, tool calls)
-            context: Additional context data to include in the processing
-            channel_id: Optional channel ID (if not included in conversation_id)
+            query: The query to process
+            user_id: The user ID for context and memory
+            conversation_id: Conversation ID (typically guildId:channelId)
+            reasoning_type: Optional reasoning type to use (otherwise auto-detected)
+            update_callback: Optional callback for streaming progress updates
+            max_steps: Maximum steps for multi-step reasoning
+            context: Optional additional context
+            channel_id: Optional channel ID (can be parsed from conversation_id)
+            search_results: Optional pre-fetched search results
+            display_raw_results: Whether to display raw search results to the user
             
         Returns:
-            The response from the agent system
+            str: Response to the query
         """
         await self.ensure_initialized()
         
-        # Create a unique request ID to prevent duplicate processing
-        request_id = f"{conversation_id}:{user_id}:{hash(query)}"
+        # Initialize context if not provided
+        if context is None:
+            context = {}
+            
+        # Add search_results to context if provided
+        if search_results:
+            context["search_results"] = search_results
+            
+        # Add display_raw_results to context if True
+        if display_raw_results:
+            context["display_raw_results"] = display_raw_results
         
-        # Check if this request is already being processed
-        if request_id in self.processing_requests:
-            logger.warning(f"Duplicate request detected: {request_id}")
-            return "I'm already processing a similar request. Please wait for the response."
+        # Parse channel_id from conversation_id if not provided
+        if not channel_id and conversation_id and ":" in conversation_id:
+            channel_id = conversation_id.split(":")[-1]
+            
+        # Auto-detect reasoning type if not specified
+        if not reasoning_type:
+            reasoning_type = await self.detect_reasoning_type(query, conversation_id)
+            
+        # Determine if we should use a workflow service (complex reasoning) 
+        should_use_workflow = False
+        prefer_workflow = False
         
-        # Mark this request as being processed
-        self.processing_requests.add(request_id)
+        # Get user preferences
+        from . import memory_service
+        user_prefs = await memory_service.memory_service.get_user_preferences(user_id)
         
-        try:
-            # Extract channel_id from conversation_id if not provided
-            if channel_id is None and ":" in conversation_id:
-                parts = conversation_id.split(":")
-                if len(parts) >= 2:
-                    channel_id = parts[1]
+        # Check if user has enabled workflows in preferences
+        if user_prefs and "enable_workflows" in user_prefs:
+            prefer_workflow = user_prefs.get("enable_workflows") is True
             
-            # Merge provided context with default context
-            full_context = {
-                "user_id": user_id,
-                "channel_id": channel_id,
-                "conversation_id": conversation_id
-            }
-            if context:
-                full_context.update(context)
-            
-            # Auto-detect reasoning type if not specified
-            if reasoning_type is None:
-                reasoning_type = await self.detect_reasoning_type(query, conversation_id)
-            
-            # Check if we should use multiple reasoning types
-            should_combine = await self.should_combine_reasoning(query, conversation_id)
-            
-            if should_combine:
-                # Get multiple applicable reasoning types
-                reasoning_types = await self.detect_multiple_reasoning_types(query, conversation_id)
+        # Check if configuration allows workflows and query is suitable
+        from bot_utilities.config import config
+        if config.get("ENABLE_WORKFLOWS") and prefer_workflow:
+            # Check if query is complex enough for workflow
+            if len(query.split()) >= 10 or any(x in query.lower() for x in ["complex", "thorough", "workflow", "detail", "elaborate"]):
+                should_use_workflow = True
                 
-                # Keep track of which combinations are being used
-                combo_key = ":".join(sorted(reasoning_types[:2]))
+        # Add interleaved_format for clear thought revision visibility in context if using sequential reasoning
+        if reasoning_type == "sequential" or "sequential" in reasoning_type:
+            context["interleaved_format"] = True
                 
-                # Include reasoning types in context
-                full_context["reasoning_types"] = reasoning_types
-                full_context["primary_reasoning"] = reasoning_types[0]
-                full_context["secondary_reasoning"] = reasoning_types[1] if len(reasoning_types) > 1 else None
-                
-                # Update callback with reasoning type info if provided
-                if update_callback:
-                    await update_callback("reasoning_switch", {
-                        "reasoning_types": reasoning_types,
-                        "is_combined": True
-                    })
-                
-                logger.info(f"Using combined reasoning types: {reasoning_types} for query: {query[:100]}")
-            else:
-                # Just use the primary reasoning type
-                full_context["reasoning_types"] = [reasoning_type]
-                full_context["primary_reasoning"] = reasoning_type
-                
-                # Update callback with reasoning type info if provided
-                if update_callback:
-                    await update_callback("reasoning_switch", {
-                        "reasoning_types": [reasoning_type],
-                        "is_combined": False
-                    })
-                
-                logger.info(f"Using reasoning type: {reasoning_type} for query: {query[:100]}")
-            
-            # Process the query using the orchestrator
-            response = await self.orchestrator.process_query(
-                query=query,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                reasoning_type=reasoning_type,
-                max_steps=max_steps,
-                update_callback=update_callback,
-                context=full_context
-            )
-            
-            # Update successful combinations if this was a combined approach
-            if should_combine:
-                self.successful_combos[combo_key] = self.successful_combos.get(combo_key, 0) + 1
-            
-            return response
-        finally:
-            # Remove request from processing set, regardless of success or failure
-            if request_id in self.processing_requests:
-                self.processing_requests.remove(request_id)
+        # Process with workflow service if appropriate
+        if should_use_workflow:
+            try:
+                from . import workflow_service
+                # Check if workflow service is available
+                if await workflow_service.workflow_service.is_workflow_available():
+                    # Get workflow type (auto-detected if not specified)
+                    workflow_type = None
+                    if user_prefs and "workflow_type" in user_prefs:
+                        workflow_type = user_prefs.get("workflow_type")
+                        if workflow_type == "auto":
+                            workflow_type = None  # Let workflow service auto-detect
+                            
+                    # Process with workflow
+                    return await workflow_service.workflow_service.process_with_workflow(
+                        query=query,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        workflow_type=workflow_type,
+                        update_callback=update_callback,
+                        search_results=search_results,
+                        display_raw_results=display_raw_results
+                    )
+            except Exception as e:
+                print(f"Error using workflow service: {e}")
+                traceback.print_exc()
+                # Fall back to regular processing
+        
+        # Process using specialized reasoning agents
+        if reasoning_type == "conversational":
+            return await self._process_conversational_reasoning(query, user_id, conversation_id, update_callback, context)
+        elif reasoning_type == "sequential":
+            return await self._process_sequential_reasoning(query, user_id, conversation_id, update_callback, context)
+        elif reasoning_type == "rag":
+            return await self._process_rag_reasoning(query, user_id, conversation_id, update_callback, context)
+        elif reasoning_type == "verification":
+            return await self._process_verification_reasoning(query, user_id, conversation_id, update_callback, context)
+        elif reasoning_type == "calculation":
+            return await self._process_calculation_reasoning(query, user_id, conversation_id, update_callback, context)
+        elif reasoning_type == "creative":
+            return await self._process_creative_reasoning(query, user_id, conversation_id, update_callback, context)
+        elif reasoning_type == "graph":
+            return await self._process_graph_reasoning(query, user_id, conversation_id, update_callback, context)
+        else:
+            # Default to conversational reasoning
+            return await self._process_conversational_reasoning(query, user_id, conversation_id, update_callback, context)
     
     async def process_agent(self, agent_id: str, query: str, context: Dict[str, Any]) -> AgentCommand:
         """
@@ -268,26 +276,66 @@ class AgentService:
         """
         await self.ensure_initialized()
         
+        # Pre-process the query to handle special cases
+        lower_query = query.lower()
+        
+        # Handle "how to" questions as sequential by default
+        is_how_to = re.search(r'(how to|how do I|how can I|steps to|guide for|tutorial|instructions for)', lower_query)
+        
         # Define patterns for different reasoning types
         patterns = {
             "sequential": r"(step[s]?[ -]by[ -]step|logical|explain why|explain how|think through|break down|walkthrough|reasoning|analysis)",
             "rag": r"(information|research|look up|find out|search for|latest|recent|news|article|data)",
             "verification": r"(verify|fact check|is it true|confirm|evidence|proof|reliable|ensure|validate)",
-            "calculation": r"(calculate|compute|solve|equation|formula|math|add|multiply|divide|subtract|percentage|formula)",
+            "calculation": r"(calculate|compute|math problem|equation|formula|numerical|add|multiply|divide|subtract|percentage|formula|=|\+|\-|\*|\/|\^|sqrt|square root|solve for x|find the value|algebra|calculus|arithmetic|[\d]+[\s]*[\+\-\*\/\^])",
             "creative": r"(creative|story|poem|imagine|pretend|fiction|narrative|write a|generate a)",
             "graph": r"(relationship|network|connect|graph|diagram|map the|connections between|linked|association)"
         }
+        
+        # Check for calculation patterns that should override others
+        is_calculation = False
+        
+        # Check for mathematical expressions
+        if re.search(r'(\d+\s*[\+\-\*\/\^]\s*\d+)', query) or \
+            re.search(r'(solve for \w+|find the value of \w+|calculate \w+|compute \w+|evaluate \w+)', lower_query):
+            is_calculation = True
+        
+        # Check for equation patterns
+        if "=" in query or re.search(r'x\s*=|y\s*=|f\(x\)\s*=', query):
+            is_calculation = True
+        
+        # Avoid treating "how to solve [non-math problem]" as calculation
+        if re.search(r'(how to solve|how do I solve)', lower_query):
+            # Only mark as calculation if there are clear math terms
+            if not any(term in lower_query for term in [
+                "equation", "formula", "math", "calculation", "algebra", "geometric", 
+                "arithmetic", "variable", "value of", "function", "derivative", "integral",
+                "polynomial", "logarithm", "exponential", "number", "digit", "decimal", "fraction"
+            ]):
+                is_calculation = False
+                # Boost sequential for these types of queries
+                if is_how_to:
+                    return ["sequential", "rag", "conversational"]
         
         # Check each pattern against the query
         matches = {}
         for reasoning_type, pattern in patterns.items():
             # Count the number of matches for the pattern
             match_count = len(re.findall(pattern, query, re.IGNORECASE))
-            if match_count > 0:
+            
+            # Special case for calculation
+            if reasoning_type == "calculation" and is_calculation:
+                matches[reasoning_type] = match_count + 10  # Give it a boost if special patterns detected
+            elif reasoning_type == "sequential" and is_how_to:
+                matches[reasoning_type] = match_count + 5   # Give sequential a boost for how-to questions
+            elif match_count > 0:
                 matches[reasoning_type] = match_count
         
         # If no matches found, default to conversational
         if not matches:
+            # For how-to questions with no specific matches, default to sequential
+            if is_how_to:
+                return ["sequential", "rag", "conversational"]
             return ["conversational"]
         
         # Sort reasoning types by match count (descending)
@@ -299,6 +347,9 @@ class AgentService:
         # If result is empty, default to conversational
         if not result:
             result = ["conversational"]
+        
+        # Log the detection result for debugging
+        logger.info(f"Detected reasoning types for query '{query}': {result}")
         
         return result
     
@@ -489,48 +540,188 @@ class AgentService:
             conversation_id: Optional conversation ID for context
             
         Returns:
-            bool: True if reasoning types should be combined
+            bool: Whether multiple reasoning types should be combined
         """
-        # Detect multiple reasoning types
-        reasoning_types = await self.detect_multiple_reasoning_types(query, conversation_id, max_types=2)
-        
-        # Only consider combining if we have at least 2 types
-        if len(reasoning_types) < 2:
-            return False
-        
-        # Define effective combinations
-        effective_combinations = [
-            {"sequential", "rag"},
-            {"verification", "rag"},
-            {"calculation", "sequential"},
-            {"creative", "sequential"},
-            {"graph", "rag"},
-            {"graph", "verification"}
+        # Check for explicit combination requests in the query
+        lower_query = query.lower()
+        combination_markers = [
+            "step by step and search", "search and verify", "verify and explain",
+            "combine multiple reasoning", "analyze from different perspectives",
+            "both search and explain", "calculate and explain", "creative and structured"
         ]
         
-        # Check if detected types form an effective combination
-        detected_set = set(reasoning_types[:2])
-        for combination in effective_combinations:
-            if detected_set.issubset(combination) or combination.issubset(detected_set):
+        for marker in combination_markers:
+            if marker in lower_query:
                 return True
-        
-        # Special case: For complex questions with multiple keywords, prefer combination
+                
+        # Check query complexity - longer queries often benefit from combined reasoning
+        if len(query.split()) > 25:  # Long complex queries
+            return True
+            
+        # Check query patterns that typically benefit from combined reasoning
         complex_patterns = [
-            r"(why.*how)",
-            r"(calculate.*explain)",
-            r"(verify.*explain)",
-            r"(creative.*structure)",
-            r"(search.*analyze)",
-            r"(relationship.*data)"
+            r"(explain|analyze|break down) .* (with evidence|with sources|from research)",
+            r"(verify|fact check) .* (and explain|step by step)",
+            r"(calculate|solve) .* (and show steps|and explain)",
+            r"(write|create|generate) .* (with structure|structured|organized)"
         ]
         
         for pattern in complex_patterns:
-            if re.search(pattern, query, re.IGNORECASE):
+            if re.search(pattern, lower_query, re.IGNORECASE):
                 return True
-        
-        # Default to not combining
+                
+        # Default to simpler single reasoning for most queries
         return False
-    
+
+    async def execute_reasoning(self,
+                         reasoning_type: str,
+                         query: str,
+                         user_id: str,
+                         conversation_id: str = None,
+                         update_callback: Callable = None,
+                         context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Execute a specific reasoning strategy
+        
+        Args:
+            reasoning_type: The type of reasoning to use
+            query: The query to process
+            user_id: User ID for memory
+            conversation_id: Optional conversation ID
+            update_callback: Optional callback for updates
+            context: Optional additional context
+            
+        Returns:
+            Dict[str, Any]: The result of the reasoning process
+        """
+        try:
+            await self.ensure_initialized()
+            
+            # Add context if not provided
+            if context is None:
+                context = {}
+                
+            if "user_id" not in context:
+                context["user_id"] = user_id
+                
+            if "conversation_id" not in context and conversation_id:
+                context["conversation_id"] = conversation_id
+            
+            # Process according to reasoning type
+            if reasoning_type == "sequential":
+                response = await self._process_sequential_reasoning(query, user_id, conversation_id, update_callback)
+                return {"response": response, "reasoning_type": reasoning_type}
+                
+            elif reasoning_type == "sequential_thinking":
+                # Import here to avoid circular imports
+                from . import sequential_thinking_service
+                
+                # Get parameters from context
+                enable_revision = context.get("enable_revision", True)
+                enable_reflection = context.get("enable_reflection", False)
+                num_thoughts = context.get("num_thoughts", 5)
+                temperature = context.get("temperature", 0.3)
+                
+                # Process with sequential thinking
+                success, response = await sequential_thinking_service.sequential_thinking_service.process_sequential_thinking(
+                    problem=query,
+                    context=context,
+                    prompt_style="sequential",
+                    num_thoughts=num_thoughts,
+                    temperature=temperature,
+                    enable_revision=enable_revision,
+                    enable_reflection=enable_reflection,
+                    session_id=f"session_{user_id}_{conversation_id}"
+                )
+                
+                return {"response": response, "success": success, "reasoning_type": reasoning_type}
+                
+            elif reasoning_type == "rag":
+                response = await self._process_rag_reasoning(query, user_id, conversation_id, update_callback)
+                return {"response": response, "reasoning_type": reasoning_type}
+                
+            elif reasoning_type == "verification":
+                response = await self._process_verification_reasoning(query, user_id, conversation_id, update_callback)
+                return {"response": response, "reasoning_type": reasoning_type}
+                
+            elif reasoning_type == "calculation":
+                response = await self._process_calculation_reasoning(query, user_id, conversation_id, update_callback)
+                return {"response": response, "reasoning_type": reasoning_type}
+                
+            elif reasoning_type == "creative":
+                response = await self._process_creative_reasoning(query, user_id, conversation_id, update_callback)
+                return {"response": response, "reasoning_type": reasoning_type}
+                
+            elif reasoning_type == "graph":
+                response = await self._process_graph_reasoning(query, user_id, conversation_id, update_callback)
+                return {"response": response, "reasoning_type": reasoning_type}
+                
+            elif reasoning_type == "multi_agent":
+                # Use the multi-agent workflow
+                from . import workflow_service
+                if workflow_service.workflow_service.is_workflow_available():
+                    response = await workflow_service.workflow_service.multi_agent_workflow(
+                        query=query,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        update_callback=update_callback
+                    )
+                    return {"response": response, "reasoning_type": reasoning_type}
+                else:
+                    # Fall back to conversational
+                    response = await self._process_conversational_reasoning(query, user_id, conversation_id, update_callback)
+                    return {"response": response, "reasoning_type": reasoning_type}
+            else:
+                # Default to conversational reasoning
+                response = await self._process_conversational_reasoning(query, user_id, conversation_id, update_callback)
+                return {"response": response, "reasoning_type": "conversational"}
+                
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            print(f"Error in execute_reasoning: {error_traceback}")
+            return {
+                "error": str(e),
+                "response": f"Error in {reasoning_type} reasoning: {str(e)}",
+                "reasoning_type": reasoning_type
+            }
+
+    async def get_workflow_type(self, query: str, conversation_id: str = None) -> str:
+        """
+        Get the appropriate workflow type for a query
+        
+        Args:
+            query: The user query
+            conversation_id: Optional conversation ID for context
+            
+        Returns:
+            str: The detected workflow type
+        """
+        # Import workflow service (lazy import to avoid circular dependency)
+        from . import workflow_service
+        
+        # Check if workflow service is available
+        if workflow_service.workflow_service.is_workflow_available():
+            # Use workflow service to detect workflow type
+            return await workflow_service.workflow_service.detect_workflow_type(query, conversation_id)
+        
+        # Fallback: Determine workflow based on reasoning types
+        reasoning_types = await self.detect_multiple_reasoning_types(query, conversation_id, max_types=2)
+        
+        # Map reasoning type combinations to workflow types
+        if set(reasoning_types[:2]) == {"sequential", "rag"} or "sequential" in reasoning_types and "rag" in reasoning_types:
+            return "sequential_rag"
+        elif set(reasoning_types[:2]) == {"verification", "rag"} or "verification" in reasoning_types and "rag" in reasoning_types:
+            return "verification_rag"
+        elif set(reasoning_types[:2]) == {"calculation", "sequential"} or "calculation" in reasoning_types and "sequential" in reasoning_types:
+            return "calculation_sequential"
+        elif set(reasoning_types[:2]) == {"creative", "sequential"} or "creative" in reasoning_types and "sequential" in reasoning_types:
+            return "creative_sequential"
+        elif "graph" in reasoning_types and ("rag" in reasoning_types or "verification" in reasoning_types):
+            return "graph_rag_verification"
+        else:
+            # Default to multi-agent for other combinations
+            return "multi_agent"
+
     async def reset_conversation(self, conversation_id: str) -> None:
         """
         Reset a specific conversation
@@ -721,138 +912,16 @@ class AgentService:
             print(f"Error in search_web: {e}\n{error_traceback}")
             return f"An error occurred while searching for '{query}': {str(e)[:100]}..."
 
-    async def get_workflow_type(self, query: str, conversation_id: str = None) -> str:
-        """
-        Get the appropriate workflow type for the query based on reasoning types
-        
-        Args:
-            query: The user query
-            conversation_id: Optional conversation ID for context
-            
-        Returns:
-            str: The workflow type to use
-        """
-        # Import workflow service (lazy import to avoid circular dependency)
-        from . import workflow_service
-        
-        # Check if workflow service is available
-        if workflow_service.workflow_service.is_workflow_available():
-            # Use workflow service to detect workflow type
-            return await workflow_service.workflow_service.detect_workflow_type(query, conversation_id)
-        
-        # Fallback: Determine workflow based on reasoning types
-        reasoning_types = await self.detect_multiple_reasoning_types(query, conversation_id, max_types=2)
-        
-        # Map reasoning type combinations to workflow types
-        if set(reasoning_types[:2]) == {"sequential", "rag"} or "sequential" in reasoning_types and "rag" in reasoning_types:
-            return "sequential_rag"
-        elif set(reasoning_types[:2]) == {"verification", "rag"} or "verification" in reasoning_types and "rag" in reasoning_types:
-            return "verification_rag"
-        elif set(reasoning_types[:2]) == {"calculation", "sequential"} or "calculation" in reasoning_types and "sequential" in reasoning_types:
-            return "calculation_sequential"
-        elif set(reasoning_types[:2]) == {"creative", "sequential"} or "creative" in reasoning_types and "sequential" in reasoning_types:
-            return "creative_sequential"
-        elif "graph" in reasoning_types and ("rag" in reasoning_types or "verification" in reasoning_types):
-            return "graph_rag_verification"
-        else:
-            # Default to multi-agent for other combinations
-            return "multi_agent"
-
-    async def process_query(self, 
-                            query: str, 
-                            user_id: str, 
-                            conversation_id: str = None,
-                            reasoning_type: str = "conversational",
-                            update_callback: Callable = None) -> str:
-        """
-        Process a query using a specific reasoning type
-        
-        Args:
-            query: The query to process
-            user_id: User ID for memory and context
-            conversation_id: Optional conversation ID 
-            reasoning_type: The reasoning type to use (default: conversational)
-            update_callback: Optional callback for streaming updates
-            
-        Returns:
-            str: The response from the agent
-        """
-        await self.ensure_initialized()
-        
-        try:
-            # Check if we should use a workflow instead of a single reasoning type
-            should_combine = await self.should_combine_reasoning(query, conversation_id)
-            
-            if should_combine:
-                # Import workflow service (lazy import to avoid circular dependency)
-                from . import workflow_service
-                
-                # Check if workflow service is available
-                if workflow_service.workflow_service.is_workflow_available():
-                    # Determine the appropriate workflow type
-                    workflow_type = await self.get_workflow_type(query, conversation_id)
-                    
-                    # Use workflow service for combined reasoning
-                    return await workflow_service.workflow_service.process_with_workflow(
-                        query=query,
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        workflow_type=workflow_type,
-                        update_callback=update_callback
-                    )
-            
-            # If not combining or workflow service not available, use single reasoning type
-            # Notify about the reasoning type being used
-            if update_callback:
-                await update_callback("reasoning_switch", {
-                    "reasoning_types": [reasoning_type],
-                    "is_combined": False
-                })
-            
-            # Process according to reasoning type
-            if reasoning_type == "sequential":
-                return await self._process_sequential_reasoning(query, user_id, conversation_id, update_callback)
-            elif reasoning_type == "rag":
-                return await self._process_rag_reasoning(query, user_id, conversation_id, update_callback)
-            elif reasoning_type == "verification":
-                return await self._process_verification_reasoning(query, user_id, conversation_id, update_callback)
-            elif reasoning_type == "calculation":
-                return await self._process_calculation_reasoning(query, user_id, conversation_id, update_callback)
-            elif reasoning_type == "creative":
-                return await self._process_creative_reasoning(query, user_id, conversation_id, update_callback)
-            elif reasoning_type == "graph":
-                return await self._process_graph_reasoning(query, user_id, conversation_id, update_callback)
-            elif reasoning_type == "multi_agent":
-                # Import workflow service (lazy import to avoid circular dependency)
-                from . import workflow_service
-                
-                # Use workflow service for multi-agent reasoning
-                if workflow_service.workflow_service.is_workflow_available():
-                    return await workflow_service.workflow_service.process_with_workflow(
-                        query=query,
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        workflow_type="multi_agent",
-                        update_callback=update_callback
-                    )
-            else:
-                # Default to conversational reasoning
-                return await self._process_conversational_reasoning(query, user_id, conversation_id, update_callback)
-                
-        except Exception as e:
-            error_traceback = traceback.format_exc()
-            print(f"Error in process_query: {e}\n{error_traceback}")
-            return f"I encountered an error while processing your request: {str(e)}"
-
-    async def _process_conversational_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None) -> str:
+    async def _process_conversational_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None, context: Dict[str, Any] = None) -> str:
         """
         Process a query using conversational reasoning
         
         Args:
             query: The query to process
             user_id: User ID for memory and context
-            conversation_id: Optional conversation ID 
+            conversation_id: Optional conversation ID
             update_callback: Optional callback for streaming updates
+            context: Optional additional context
             
         Returns:
             str: The response from the conversational reasoning
@@ -860,75 +929,73 @@ class AgentService:
         try:
             await self.ensure_initialized()
             
-            # Notify about thinking process if callback provided
-            if update_callback:
-                await update_callback("thinking", {
-                    "thinking": "Thinking conversationally about your query..."
-                })
-                
-                await update_callback("agent_switch", {
-                    "agent_type": "conversational"
-                })
+            # Get memory service
+            from . import memory_service
             
             # Get user preferences
-            from . import memory_service
-            prefs = await memory_service.memory_service.get_user_preferences(user_id)
+            from ..memory_utils import get_user_preferences
+            user_prefs = await get_user_preferences(user_id)
             
-            # Get conversation history
-            channel_id = conversation_id.split(':')[1] if conversation_id else None
-            history = await memory_service.memory_service.get_conversation_history(user_id, channel_id)
+            # Get language setting
+            language = user_prefs.get("language", "en")
             
-            # Prepare system message with user preferences
-            system_msg = self._create_system_message(prefs)
+            # Get conversation history if available
+            history = []
+            if conversation_id:
+                history = await memory_service.memory_service.get_conversation_history(
+                    user_id=user_id,
+                    channel_id=conversation_id.split(':')[-1] if ':' in conversation_id else None,
+                    limit=10
+                )
             
-            # Prepare conversation context for AI
-            context = [{"role": "system", "content": system_msg}]
-            context.extend(history)
-            context.append({"role": "user", "content": query})
+            # Create system message based on preferences
+            system_msg = self._create_system_message(user_prefs)
             
             # Call AI provider
             from ..ai_utils import get_ai_provider
             ai_provider = await get_ai_provider()
             
-            # Create a prompt that combines all messages into a single string
-            combined_prompt = system_msg + "\n\n"
+            # Create context messages for a chat model
+            messages = [{"role": "system", "content": system_msg}]
             for msg in history:
-                role = msg["role"]
-                content = msg["content"]
-                combined_prompt += f"{role.capitalize()}: {content}\n\n"
-            combined_prompt += f"User: {query}\n\nAssistant:"
+                if msg.get("role") and msg.get("content"):
+                    messages.append({"role": msg["role"], "content": msg["content"]})
+            messages.append({"role": "user", "content": query})
             
-            # Call the AI with the combined prompt
-            response = await ai_provider.async_call(
-                prompt=combined_prompt,
+            # Call the AI with the messages list
+            response = await ai_provider.generate_text(
+                messages=messages,
                 temperature=0.7,
                 max_tokens=2000
             )
             
-            # If streaming is requested but not directly supported, simulate it
-            if update_callback:
-                # Simulate streaming by sending chunks of the response
-                full_response = response
-                chunk_size = max(20, len(full_response) // 10)  # Divide into ~10 chunks
-                
-                current_response = ""
-                for i in range(0, len(full_response), chunk_size):
-                    chunk = full_response[i:i+chunk_size]
-                    current_response += chunk
-                    await update_callback("update", {"content": current_response})
-                    await asyncio.sleep(0.1)  # Short delay between chunks
-                
-                return full_response
-            else:
-                # Standard response processing
-                return response
-                
+            # Add to conversation history if available
+            if conversation_id:
+                try:
+                    # Add user message to history
+                    await memory_service.memory_service.add_to_history(
+                        user_id=user_id,
+                        channel_id=conversation_id.split(':')[-1] if ':' in conversation_id else None,
+                        entry={"role": "user", "content": query}
+                    )
+                    
+                    # Add assistant response to history
+                    await memory_service.memory_service.add_to_history(
+                        user_id=user_id,
+                        channel_id=conversation_id.split(':')[-1] if ':' in conversation_id else None,
+                        entry={"role": "assistant", "content": response}
+                    )
+                except Exception as e:
+                    print(f"Error adding to history: {e}")
+            
+            return response
+            
         except Exception as e:
             error_traceback = traceback.format_exc()
-            logger.error(f"Error in _process_conversational_reasoning: {e}\n{error_traceback}")
+            print(f"Error in _process_conversational_reasoning: {error_traceback}")
             return f"I encountered an error while processing your request: {str(e)}"
 
-    async def _process_sequential_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None) -> str:
+    async def _process_sequential_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None, context: Dict[str, Any] = None) -> str:
         """
         Process a query using sequential reasoning
         
@@ -937,6 +1004,7 @@ class AgentService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID 
             update_callback: Optional callback for streaming updates
+            context: Optional additional context
             
         Returns:
             str: The response from the sequential reasoning
@@ -947,7 +1015,7 @@ class AgentService:
             # Notify about thinking process if callback provided
             if update_callback:
                 await update_callback("thinking", {
-                    "thinking": "Breaking down the problem step by step..."
+                    "thinking": "Breaking down the problem step by step with thought revision..."
                 })
                 
                 await update_callback("agent_switch", {
@@ -957,18 +1025,50 @@ class AgentService:
             # Use the sequential_thinking_service to process the query
             from . import sequential_thinking_service
             
-            response = await sequential_thinking_service.sequential_thinking_service.process_sequential_thinking(
+            # Ensure the service is initialized
+            await sequential_thinking_service.sequential_thinking_service.ensure_initialized()
+            
+            # Create context if not provided
+            if not context:
+                context = {"user_id": user_id, "conversation_id": conversation_id}
+            else:
+                # Update context with user_id and conversation_id if not already there
+                if "user_id" not in context:
+                    context["user_id"] = user_id
+                if "conversation_id" not in context:
+                    context["conversation_id"] = conversation_id
+            
+            # Add interleaved_format for clear thought revision visibility
+            context["interleaved_format"] = True
+            
+            # Process the query with sequential thinking
+            success, response = await sequential_thinking_service.sequential_thinking_service.process_sequential_thinking(
                 problem=query,
-                context={"user_id": user_id, "conversation_id": conversation_id},
+                context=context,
                 prompt_style="sequential",
                 enable_revision=True,
-                session_id=conversation_id
+                session_id=conversation_id or f"seq_{user_id}_{int(time.time())}"
             )
             
-            # Extract the actual response from the tuple
-            if isinstance(response, tuple) and len(response) == 2:
-                success, actual_response = response
-                return actual_response
+            # Add to conversation history if successful
+            if success and conversation_id:
+                # Extract channel_id from conversation_id
+                channel_id = conversation_id.split(':')[1] if ':' in conversation_id else conversation_id
+                
+                from . import memory_service
+                # Add user message to history
+                await memory_service.memory_service.add_to_history(
+                    user_id=user_id,
+                    channel_id=channel_id,
+                    entry={"role": "user", "content": query}
+                )
+                
+                # Add assistant response to history
+                await memory_service.memory_service.add_to_history(
+                    user_id=user_id,
+                    channel_id=channel_id,
+                    entry={"role": "assistant", "content": response}
+                )
             
             return response
         
@@ -977,78 +1077,125 @@ class AgentService:
             print(f"Error in _process_sequential_reasoning: {error_traceback}")
             return f"I encountered an error while processing your request with sequential reasoning: {str(e)}"
 
-    async def _process_rag_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None) -> str:
+    async def _process_rag_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None, context: Dict[str, Any] = None) -> str:
         """
-        Process a query using RAG (Retrieval-Augmented Generation) reasoning
+        Process a query using RAG reasoning
         
         Args:
             query: The query to process
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID 
             update_callback: Optional callback for streaming updates
+            context: Optional additional context
             
         Returns:
-            str: The response from the RAG reasoning
+            str: Response
         """
         try:
-            await self.ensure_initialized()
+            # Get web search results
+            from ..web_search import search_web
+            search_results = await search_web(query)
             
-            # Notify about thinking process if callback provided
-            if update_callback:
-                await update_callback("thinking", {
-                    "thinking": "Searching for relevant information..."
-                })
-                
-                await update_callback("agent_switch", {
-                    "agent_type": "rag"
-                })
+            # Parse search results - handle both string and list formats
+            if isinstance(search_results, str):
+                formatted_results = search_results
+            else:
+                # Assume it's a list of dictionaries with title, url, and snippet
+                try:
+                    formatted_results = "\n\n".join(
+                        f"Source {i+1}: {result['title']}\n{result['url']}\n{result['snippet']}"
+                        for i, result in enumerate(search_results[:5])
+                    )
+                except (TypeError, KeyError):
+                    # If parsing fails, just use the raw results
+                    formatted_results = str(search_results)
             
-            # For now, we'll use a simplified approach
-            # In a full implementation, this would query a vector database
+            # If there are no search results, fall back to conversational
+            if not formatted_results.strip():
+                print(f"No search results found for '{query}'. Falling back to conversational reasoning.")
+                if update_callback:
+                    await update_callback("No search results found. Using conversational reasoning instead.", {})
+                return await self._process_conversational_reasoning(query, user_id, conversation_id, update_callback)
             
-            # Call the LLM with a RAG-focused prompt
+            # Get user preferences
+            from ..memory_utils import get_user_preferences
+            user_prefs = await get_user_preferences(user_id)
+            
+            # Get history if available
+            history = []
+            if conversation_id:
+                from . import memory_service
+                history = await memory_service.memory_service.get_conversation_history(
+                    user_id=user_id, 
+                    channel_id=conversation_id.split(':')[-1] if ':' in conversation_id else None,
+                    limit=5
+                )
+            
+            # Create system message
+            system_msg = f"""You are an AI assistant that provides helpful, accurate information based on search results.
+            
+User preferences: {json.dumps(user_prefs, indent=2)}
+
+When answering, follow these guidelines:
+1. Use the search results provided to inform your response
+2. If the search results don't contain relevant information, say so
+3. Prioritize recent and authoritative sources
+4. Cite sources when referencing specific information
+5. If the search results seem outdated or contradictory, note this in your response
+6. Be concise and direct in your response, focusing on answering the user's query
+"""
+            
+            # Create messages for context
+            messages = [{"role": "system", "content": system_msg}]
+            
+            # Add history if available
+            for msg in history[-5:]:  # Limit to last 5 messages
+                if msg.get("role") and msg.get("content"):
+                    messages.append({"role": msg["role"], "content": msg["content"]})
+            
+            # Add search results and query
+            search_context = f"Search Results:\n{formatted_results}"
+            messages.append({"role": "user", "content": f"{search_context}\n\nUser query: {query}"})
+            
+            # Call AI provider
             from ..ai_utils import get_ai_provider
-            llm_provider = await get_ai_provider()
+            ai_provider = await get_ai_provider()
             
-            system_message = (
-                "You are a helpful assistant that provides factual information backed by reliable sources. "
-                "Answer the question based on your knowledge, but clearly state if you're uncertain. "
-                "Always provide references or sources when possible."
+            # Generate response
+            response = await ai_provider.generate_text(
+                messages=messages,
+                temperature=0.5,
+                max_tokens=2000
             )
             
-            messages = [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": query}
-            ]
-            
-            # Call the LLM
-            result = await llm_provider.generate_text(messages=messages)
-            
-            # Update conversation history if needed
-            from . import memory_service
+            # Add to conversation history if available
             if conversation_id:
-                # Add user message to history
-                await memory_service.memory_service.add_to_history(
-                    user_id=user_id,
-                    channel_id=conversation_id,
-                    entry={"role": "user", "content": query}
-                )
-                
-                # Add assistant response to history
-                await memory_service.memory_service.add_to_history(
-                    user_id=user_id,
-                    channel_id=conversation_id,
-                    entry={"role": "assistant", "content": result}
-                )
+                try:
+                    from . import memory_service
+                    # Add user message first
+                    await memory_service.memory_service.add_to_history(
+                        user_id=user_id,
+                        channel_id=conversation_id.split(':')[-1] if ':' in conversation_id else None,
+                        entry={"role": "user", "content": query}
+                    )
+                    
+                    # Then add AI response
+                    await memory_service.memory_service.add_to_history(
+                        user_id=user_id,
+                        channel_id=conversation_id.split(':')[-1] if ':' in conversation_id else None,
+                        entry={"role": "assistant", "content": response}
+                    )
+                except Exception as e:
+                    print(f"Error adding to history: {e}")
             
-            return result
-        
+            return response
+            
         except Exception as e:
-            error_traceback = traceback.format_exc()
-            print(f"Error in _process_rag_reasoning: {error_traceback}")
-            return f"I encountered an error while processing your request with RAG reasoning: {str(e)}"
+            print(f"Error in _process_rag_reasoning: {e}")
+            traceback.print_exc()
+            return f"I encountered an error while researching information: {str(e)}"
 
-    async def _process_verification_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None) -> str:
+    async def _process_verification_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None, context: Dict[str, Any] = None) -> str:
         """
         Process a query using verification reasoning
         
@@ -1057,6 +1204,7 @@ class AgentService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID 
             update_callback: Optional callback for streaming updates
+            context: Optional additional context
             
         Returns:
             str: The response from the verification reasoning
@@ -1096,16 +1244,19 @@ class AgentService:
             # Update conversation history if needed
             from . import memory_service
             if conversation_id:
+                # Extract channel_id from conversation_id
+                channel_id = conversation_id.split(':')[1] if ':' in conversation_id else conversation_id
+                
                 # Add entries to conversation history
                 await memory_service.memory_service.add_to_history(
                     user_id=user_id,
-                    channel_id=conversation_id,
+                    channel_id=channel_id,
                     entry={"role": "user", "content": query}
                 )
                 
                 await memory_service.memory_service.add_to_history(
                     user_id=user_id,
-                    channel_id=conversation_id,
+                    channel_id=channel_id,
                     entry={"role": "assistant", "content": result}
                 )
             
@@ -1116,7 +1267,7 @@ class AgentService:
             print(f"Error in _process_verification_reasoning: {error_traceback}")
             return f"I encountered an error while processing your request with verification reasoning: {str(e)}"
 
-    async def _process_calculation_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None) -> str:
+    async def _process_calculation_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None, context: Dict[str, Any] = None) -> str:
         """
         Process a query using calculation reasoning
         
@@ -1125,6 +1276,7 @@ class AgentService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID 
             update_callback: Optional callback for streaming updates
+            context: Optional additional context
             
         Returns:
             str: The response from the calculation reasoning
@@ -1135,7 +1287,7 @@ class AgentService:
             # Notify about thinking process if callback provided
             if update_callback:
                 await update_callback("thinking", {
-                    "thinking": "Calculating the mathematical solution..."
+                    "thinking": "Performing calculation and symbolic reasoning..."
                 })
                 
                 await update_callback("agent_switch", {
@@ -1148,12 +1300,41 @@ class AgentService:
             # Check if the symbolic reasoning service is available
             if hasattr(symbolic_reasoning_service, 'symbolic_reasoning_service'):
                 # Process calculation using the symbolic reasoning service
-                return await symbolic_reasoning_service.symbolic_reasoning_service.process_calculation(
+                result = await symbolic_reasoning_service.symbolic_reasoning_service.process_calculation(
                     query=query,
                     user_id=user_id,
                     conversation_id=conversation_id,
                     update_callback=update_callback
                 )
+                
+                # Check if the result is a dictionary (new format) or string (old format)
+                if isinstance(result, dict):
+                    # Extract the response field or use default message
+                    response = result.get("response", "I couldn't process this calculation.")
+                    
+                    # Update conversation history if needed
+                    from . import memory_service
+                    if conversation_id:
+                        # Extract channel_id from conversation_id
+                        channel_id = conversation_id.split(':')[1] if ':' in conversation_id else conversation_id
+                        
+                        # Add entries to conversation history
+                        await memory_service.memory_service.add_to_history(
+                            user_id=user_id,
+                            channel_id=channel_id,
+                            entry={"role": "user", "content": query}
+                        )
+                        
+                        await memory_service.memory_service.add_to_history(
+                            user_id=user_id,
+                            channel_id=channel_id,
+                            entry={"role": "assistant", "content": response}
+                        )
+                    
+                    return response
+                else:
+                    # It's already a string, return as is
+                    return result
             
             # Fallback: Call the LLM with a calculation-focused prompt
             from ..ai_utils import get_ai_provider
@@ -1177,16 +1358,19 @@ class AgentService:
             # Update conversation history if needed
             from . import memory_service
             if conversation_id:
+                # Extract channel_id from conversation_id
+                channel_id = conversation_id.split(':')[1] if ':' in conversation_id else conversation_id
+                
                 # Add entries to conversation history
                 await memory_service.memory_service.add_to_history(
                     user_id=user_id,
-                    channel_id=conversation_id,
+                    channel_id=channel_id,
                     entry={"role": "user", "content": query}
                 )
                 
                 await memory_service.memory_service.add_to_history(
                     user_id=user_id,
-                    channel_id=conversation_id,
+                    channel_id=channel_id,
                     entry={"role": "assistant", "content": result}
                 )
             
@@ -1197,7 +1381,7 @@ class AgentService:
             print(f"Error in _process_calculation_reasoning: {error_traceback}")
             return f"I encountered an error while processing your request with calculation reasoning: {str(e)}"
 
-    async def _process_creative_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None) -> str:
+    async def _process_creative_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None, context: Dict[str, Any] = None) -> str:
         """
         Process a query using creative reasoning
         
@@ -1206,6 +1390,7 @@ class AgentService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID 
             update_callback: Optional callback for streaming updates
+            context: Optional additional context
             
         Returns:
             str: The response from the creative reasoning
@@ -1245,16 +1430,19 @@ class AgentService:
             # Update conversation history if needed
             from . import memory_service
             if conversation_id:
+                # Extract channel_id from conversation_id
+                channel_id = conversation_id.split(':')[1] if ':' in conversation_id else conversation_id
+                
                 # Add entries to conversation history
                 await memory_service.memory_service.add_to_history(
                     user_id=user_id,
-                    channel_id=conversation_id,
+                    channel_id=channel_id,
                     entry={"role": "user", "content": query}
                 )
                 
                 await memory_service.memory_service.add_to_history(
                     user_id=user_id,
-                    channel_id=conversation_id,
+                    channel_id=channel_id,
                     entry={"role": "assistant", "content": result}
                 )
             
@@ -1265,7 +1453,7 @@ class AgentService:
             print(f"Error in _process_creative_reasoning: {error_traceback}")
             return f"I encountered an error while processing your request with creative reasoning: {str(e)}"
 
-    async def _process_graph_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None) -> str:
+    async def _process_graph_reasoning(self, query: str, user_id: str, conversation_id: str = None, update_callback: Callable = None, context: Dict[str, Any] = None) -> str:
         """
         Process a query using graph reasoning
         
@@ -1274,6 +1462,7 @@ class AgentService:
             user_id: User ID for memory and context
             conversation_id: Optional conversation ID 
             update_callback: Optional callback for streaming updates
+            context: Optional additional context
             
         Returns:
             str: The response from the graph reasoning
@@ -1313,16 +1502,19 @@ class AgentService:
             # Update conversation history if needed
             from . import memory_service
             if conversation_id:
+                # Extract channel_id from conversation_id
+                channel_id = conversation_id.split(':')[1] if ':' in conversation_id else conversation_id
+                
                 # Add entries to conversation history
                 await memory_service.memory_service.add_to_history(
                     user_id=user_id,
-                    channel_id=conversation_id,
+                    channel_id=channel_id,
                     entry={"role": "user", "content": query}
                 )
                 
                 await memory_service.memory_service.add_to_history(
                     user_id=user_id,
-                    channel_id=conversation_id,
+                    channel_id=channel_id,
                     entry={"role": "assistant", "content": result}
                 )
             

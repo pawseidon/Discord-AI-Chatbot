@@ -23,6 +23,9 @@ A powerful Discord bot powered by advanced AI models, featuring a multi-agent re
 - **Emoji Reactions**: Visual indicators showing which reasoning type is being used
 - **Workflow Mode**: Complex multi-step reasoning using LangGraph (optional)
 - **Symbolic Reasoning**: Deterministic math and logic operations for precise calculations
+- **Dynamic Emoji Progression**: Visualize the reasoning process with emoji state transitions
+- **Adaptive Workflows**: 12 optimized workflow combinations for different query types
+- **Transparent Reasoning**: Thoughts stay visible to the user, including revisions and modifications
 
 ### Conversational AI 💬
 - **Multi-Language Support**: Communicate in 16 different languages including English, Spanish, French, Chinese, and more
@@ -62,6 +65,8 @@ The bot automatically detects the most appropriate reasoning mode based on your 
 - "Calculate the compound interest on $1000 at 5% for 5 years" → Calculation mode (math)
 - "Map the relationships between characters in Hamlet" → Graph mode (relationship analysis)
 - "Analyze the pros and cons of remote work from different perspectives" → Multi-agent mode (multiple viewpoints)
+- "Help me deeply understand blockchain technology" → Knowledge Synthesis mode (comprehensive learning)
+- "Debug this algorithm and find bottlenecks" → Analytical Problem-Solving mode (technical diagnosis)
 
 ### User Settings
 You can customize your experience with natural language commands:
@@ -108,6 +113,8 @@ Include these phrases to explicitly request a specific reasoning approach:
 - **Graph-of-Thought** 📊: `Map the connections between [concepts]`
 - **Multi-Agent** 👥: `Analyze [topic] from multiple perspectives`
 - **Calculation** 🧮: `Calculate [mathematical expression]`
+- **Knowledge Synthesis** 📚→📊→⛓️: `Help me deeply understand [complex topic]`
+- **Analytical Problem-Solving** 🔎→🧩→🧮: `Debug and diagnose the issues with [system/code]`
 
 ## Installation Guide
 
@@ -193,20 +200,55 @@ Change the bot's personality by setting `DEFAULT_INSTRUCTION` in config.yml:
 
 The Discord AI Chatbot uses a sophisticated multi-agent architecture that dynamically selects different reasoning approaches based on the query type:
 
-### Agent Types
+### Core Reasoning Types
 
-| Agent Type | Emoji | Description | Best For |
+| Reasoning Type | Emoji | Description | Best For |
 |------------|-------|-------------|----------|
-| Sequential | 🔄 | Step-by-step analytical thinking | Complex problems, detailed analysis |
 | RAG | 📚 | Retrieval-Augmented Generation | Information seeking, fact-based queries |
-| Conversational | 💬 | Natural, friendly dialogue | Casual chat, simple exchanges |
-| Knowledge | 📚 | Detailed educational content | Learning, concept explanation |
+| Sequential | 🔄 | Step-by-step analytical thinking | Complex problems, detailed analysis |
 | Verification | ✅ | Fact-checking and validation | Claims evaluation, truth assessment |
+| Multi-Agent | 👥 | Multiple perspectives on a topic | Balanced viewpoints, debates |
+| Graph | 📊 | Relationship mapping and network analysis | Concept networks, interconnections |
+| Symbolic Calculation | 🧮 | Deterministic mathematical operations | Computations, numerical analysis |
 | Creative | 🎨 | Imaginative content generation | Stories, art, creative writing |
-| Calculation | 🧮 | Mathematical operations | Computations, numerical analysis |
-| Planning | 📋 | Structured strategy development | Project plans, task organization |
-| Graph | 📊 | Relationship mapping | Concept networks, interconnections |
-| Multi-Agent | 👥 | Multiple perspectives | Balanced viewpoints, debates |
+| Step-Back | 🔍 | Broad context consideration | Big-picture reasoning, meta-analysis |
+| Chain-of-Thought | ⛓️ | Logical progression of ideas | Structured reasoning, logical deduction |
+| Contextual | 👤 | Personalized response based on conversation history | User-specific recommendations, adaptive responses |
+| Detail Analysis | 🔎 | In-depth problem examination | Technical debugging, root cause analysis |
+| Component Breakdown | 🧩 | Isolating and examining individual elements | Systems analysis, complex problem decomposition |
+
+### Optimized Workflow Combinations
+
+The bot automatically determines which specialized workflow combinations to use based on your query:
+
+| Workflow | Emoji Sequence | Combination | Use Case |
+|----------|---------------|-------------|----------|
+| Educational Explanations | 📚→🔄→✅ | RAG → Sequential → Verification | Educational content, step-by-step explanations |
+| Controversial Topic Analysis | 👥→📊→✅ | Multi-Agent → Graph → Verification | Debates, ethical discussions, balanced analysis |
+| Creative Development | 🎨→🔍→🔄 | Creative → Step-Back → Sequential | Structured creative content, purposeful storytelling |
+| Technical Problem-Solving | 🧮→📊→✅ | Symbolic → Graph → Verification | Mathematical problems, engineering, STEM queries |
+| Fact-Checking & Verification | 📚→✅→👥 | RAG → Verification → Multi-Agent | News analysis, claim validation, research |
+| Strategic Planning | 📊→🔄→🔍 | Graph → Sequential → Step-Back | Project planning, roadmaps, strategy development |
+| Relationship Analysis | 📊→📚→👥 | Graph → RAG → Multi-Agent | Network analysis, complex systems, interconnections |
+| Predictive Scenarios | ⛓️→📊→🧮 | Chain-of-Thought → Graph → Symbolic | Forecasting, trend analysis, scenario planning |
+| Personalized Advice | 👤→📚→✅ | Contextual → RAG → Verification | Personalized recommendations, custom guidance |
+| Cross-Domain Innovation | 🎨→📊→👥 | Creative → Graph → Multi-Agent | Interdisciplinary ideas, novel applications |
+| Knowledge Synthesis | 📚→📊→⛓️ | RAG → Graph → Chain-of-Thought | Comprehensive understanding, knowledge maps |
+| Analytical Problem-Solving | 🔎→🧩→🧮 | Detail Analysis → Component Breakdown → Symbolic Calculation | Debugging, system analysis, optimization |
+
+### Pure Single-Reasoning Use Cases
+
+For simpler queries, the system uses a single reasoning type:
+
+| Mode | Emoji | Use Case | Example | Dynamic Flow |
+|------|-------|----------|---------|-------------|
+| RAG Alone | 📚 | Simple facts, current information | "What is the capital of France?" | 🔄→📚→📝 |
+| Symbolic Alone | 🧮 | Basic calculations, equations | "Calculate 15% of 200" | 🔄→🧮→📝 |
+| Creative Alone | 🎨 | Simple creative requests | "Write a haiku about moonlight" | 🔄→🎨→📝 |
+| Verification Alone | ✅ | Quick fact checks | "Is water H2O?" | 🔄→✅→📝 |
+| Sequential Alone | 🔄 | Step-by-step tutorials | "How do I bake a cake?" | 🔄→🔍→🧩→📋→📝 |
+
+Thoughts stay visible to the user throughout the reasoning process, including any revisions or modifications to earlier steps.
 
 ### How It Works
 
@@ -218,31 +260,79 @@ The bot uses a sophisticated orchestration system to determine the most appropri
    - Creative requests like stories or poems use Creative mode
    - Mathematical questions route to the Calculation agent
    - Multiple-perspective requests engage the Multi-agent workflow
+   - Deep understanding requests activate Knowledge Synthesis
+   - Debugging and diagnosis requests use Analytical Problem-Solving
 
 2. **Smart Context Analysis**: Beyond keywords, the bot examines:
-   - Complexity of the question (simple → Conversational, complex → Sequential)
+   - Complexity of the question (simple → single reasoning, complex → workflow combinations)
    - Question patterns (who/what/when → RAG, how/why → Sequential)
-   - Specific verbs ("verify," "calculate," "create," "explain," "map")
-   - Request structure (step-by-step indicators, fact-checking cues)
+   - Specific verbs ("verify," "calculate," "create," "explain," "map," "debug," "synthesize")
+   - Request structure and context markers
 
 3. **Dynamic Reasoning Selection**: The bot doesn't just use one reasoning mode:
-   - It may combine multiple reasoning types for complex queries
-   - For example: "Research recent advances in AI and analyze their potential impacts step by step" 
-     would combine RAG (for research) with Sequential (for step-by-step analysis)
-   - The reasoning icon (emoji) shows which mode is being used
+   - For complex queries, it selects an optimized workflow combination
+   - For example: "Explain how quantum computing works step-by-step" triggers the Educational Explanations workflow
+   - The emoji sequence shows which reasoning types are being used in order
 
 4. **User Preference Adaptation**: Your settings and history influence mode selection:
    - If you've set a preferred reasoning mode, the bot prioritizes it
    - The bot learns from your interactions and adjusts over time
    - You can override automatic selection for any specific query
 
-5. **Workflow Orchestration**: For complex multi-step queries, the bot may activate workflow mode:
-   - Breaks down complex tasks into manageable sub-tasks
-   - Routes each sub-task to the appropriate specialized agent
-   - Maintains a shared state to pass information between agents
-   - Synthesizes all agent outputs into a cohesive response
+5. **Workflow Orchestration**: For complex multi-step queries, the bot activates the appropriate workflow:
+   - Each workflow follows a specific reasoning sequence optimized for the query type
+   - Individual reasoning agents contribute their specialized capabilities
+   - The system maintains transitions between reasoning phases with visual indicators
+   - Outputs are synthesized into a cohesive response
 
 This autonomous selection happens behind the scenes - you don't need to specify reasoning modes unless you want to override the bot's choices.
+
+### Enhanced Sequential Reasoning Visualization
+
+For sequential reasoning, each step is clearly marked with dynamic emoji indicators:
+
+```
+🔄 **Sequential Reasoning Initiated**
+
+🔍 **Step 1**: [Understanding the problem]
+[Detailed breakdown of the problem]
+
+🧩 **Step 2**: [Breaking down components]
+[Analysis of key components]
+
+📋 **Step 3**: [Organizing information]
+[Structured organization of relevant data]
+
+🔎 **Step 4**: [Detailed analysis]
+[In-depth examination of each aspect]
+
+🧠 **Step 5**: [Applying principles]
+[Application of relevant concepts/theories]
+
+📝 **Working Memory**: [Key points to remember]
+[Important information retained through the process]
+
+🔄 **Revision**: [Refining earlier understanding]
+[Updates to previous steps based on new insights]
+
+⚖️ **Evaluation**: [Assessing options]
+[Comparing different approaches/solutions]
+
+✅ **Conclusion**: [Final synthesis]
+[Comprehensive answer based on sequential analysis]
+```
+
+For complex reasoning, additional indicators highlight specific cognitive functions:
+
+- 💡 **Insight**: [New realization]
+- 🔀 **Alternative Path**: [Different approach]
+- 🔄 **Recursive Analysis**: [Deeper iteration]
+- 🌐 **Broader Context**: [Zooming out]
+- 🔬 **Detailed Focus**: [Zooming in]
+- ⚠️ **Potential Issue**: [Problem identification]
+- 🛠️ **Solution Approach**: [Fixing identified issue]
+
+This structured formatting helps you follow the bot's reasoning process clearly from start to finish. All thoughts remain visible throughout the process, allowing you to track the evolution of reasoning, including any revisions to earlier steps.
 
 ### Workflow Mode
 
@@ -268,20 +358,79 @@ For advanced users, the bot supports a workflow mode that uses LangGraph to orch
 
 The bot uses emoji reactions to indicate which reasoning type is being used:
 
+### Primary Reasoning Types
 | Emoji | Reasoning Type | Description |
 |-------|---------------|-------------|
-| 🔄 | Sequential | Step-by-step analytical thinking |
 | 📚 | RAG | Retrieval-Augmented Generation (information lookup) |
-| 💬 | Conversational | Natural dialogue mode |
+| 🔄 | Sequential | Step-by-step analytical thinking |
 | ✅ | Verification | Fact-checking and validation |
+| 👥 | Multi-Agent | Multiple perspectives on a topic |
+| 📊 | Graph | Relationship mapping and network analysis |
+| 🧮 | Symbolic | Mathematical operations and deterministic reasoning |
 | 🎨 | Creative | Imaginative content generation |
-| 🧮 | Calculation | Mathematical operations |
-| 📊 | Graph | Relationship mapping and analysis |
-| 👥 | Multi-Agent | Multiple specialized approaches |
-| 📋 | Planning | Structured strategy development |
-| 🔍 | Step-Back | Big-picture perspective |
-| ⛓️ | Chain-of-Thought | Logical progression |
-| 🔄 | ReAct | Reasoning with actions |
+| 🔍 | Step-Back | Big-picture perspective and meta-analysis |
+| ⛓️ | Chain-of-Thought | Logical progression of ideas |
+| 👤 | Contextual | Personalized response based on conversation history |
+| 🔎 | Detail Analysis | In-depth problem examination (new) |
+| 🧩 | Component Breakdown | Isolating individual elements (new) |
+
+### Dynamic Sequential Thinking Progression
+| Stage | Primary Emoji | Alternative Emojis | Description |
+|-------|--------------|-------------------|-------------|
+| Initialization | 🔄 | ⚙️, 🚀 | Processing started |
+| Problem Understanding | 🔍 | 🔎, 👁️ | Comprehending the query |
+| Component Breakdown | 🧩 | 📋, 📊 | Breaking into parts |
+| Information Organization | 📋 | 🗂️, 📑 | Structuring data |
+| Detailed Analysis | 🔎 | 🔬, 📈 | In-depth examination |
+| Principle Application | 🧠 | 💡, 📖 | Applying concepts |
+| Working Memory | 📝 | 🗒️, 💾 | Key information storage |
+| Revision | 🔄 | 🔁, 📝 | Updating understanding |
+| Evaluation | ⚖️ | 🔍, 📊 | Assessing options |
+| Conclusion | ✅ | 📌, 🏁 | Final synthesis |
+
+### Advanced Reasoning Functions
+| Function | Emoji | Description |
+|----------|-------|-------------|
+| Insight | 💡 | New realization or understanding |
+| Alternative Path | 🔀 | Different approach considered |
+| Recursive Analysis | 🔄 | Deeper iteration on a concept |
+| Broader Context | 🌐 | Zooming out for larger perspective |
+| Detailed Focus | 🔬 | Zooming in on specific details |
+| Contradiction Identified | ⚠️ | Potential issue or inconsistency |
+| Resolution Approach | 🛠️ | Addressing identified problems |
+| Connection Made | 🔗 | Linking previously separate concepts |
+| Uncertainty | ❓ | Areas of incomplete knowledge |
+| Critical Analysis | 🔥 | Challenging assumptions/evidence |
+
+### Workflow Combination Indicators
+| Emoji Sequence | Workflow | Description |
+|----------------|----------|-------------|
+| 📚→🔄→✅ | Educational Explanations | RAG → Sequential → Verification |
+| 👥→📊→✅ | Controversial Topics | Multi-Agent → Graph → Verification |
+| 🎨→🔍→🔄 | Creative Development | Creative → Step-Back → Sequential |
+| 🧮→📊→✅ | Technical Problem-Solving | Symbolic → Graph → Verification |
+| 📚→✅→👥 | Fact-Checking | RAG → Verification → Multi-Agent |
+| 📊→🔄→🔍 | Strategic Planning | Graph → Sequential → Step-Back |
+| 📊→📚→👥 | Relationship Analysis | Graph → RAG → Multi-Agent |
+| ⛓️→📊→🧮 | Predictive Scenarios | Chain-of-Thought → Graph → Symbolic |
+| 👤→📚→✅ | Personalized Advice | Contextual → RAG → Verification |
+| 🎨→📊→👥 | Cross-Domain Innovation | Creative → Graph → Multi-Agent |
+| 📚→📊→⛓️ | Knowledge Synthesis | RAG → Graph → Chain-of-Thought |
+| 🔎→🧩→🧮 | Analytical Problem-Solving | Detail Analysis → Component Breakdown → Symbolic Calculation |
+
+### Dynamic State Transitions
+The system now visually indicates transitions between reasoning states:
+
+```
+🔄→📚 (Switching to information retrieval)
+📚→🧩 (Organizing retrieved information)
+🧩→🔄 (Beginning sequential analysis)
+🔄→💡 (New insight discovered)
+💡→🔎 (Examining insight in detail)
+🔎→✅ (Verifying analyzed information)
+```
+
+These emoji indicators provide a visual guide to the bot's reasoning process, helping you understand which approach is being used at each stage of the response. All thoughts and reasoning steps remain visible throughout the process, allowing you to follow the complete thinking path, including any revisions or modifications.
 
 ## Core Capabilities
 
@@ -361,3 +510,34 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Multi-Agent Reasoning System
+
+### Now with 12 Optimized Workflows! 🚀
+
+The Discord AI Chatbot now features a sophisticated multi-agent reasoning system that dynamically selects different approaches based on query type, providing optimized responses for various tasks.
+
+Each workflow combines specialized reasoning types for optimal problem-solving:
+
+- **Educational Explanations** (📚→🔄→✅): Educational content, step-by-step explanations
+- **Controversial Topic Analysis** (👥→📊→✅): Debates, ethical discussions, balanced analysis
+- **Creative Development** (🎨→🔍→🔄): Structured creative content, purposeful storytelling
+- **Technical Problem-Solving** (🧮→📊→✅): Mathematical problems, engineering, STEM queries
+- **Fact-Checking** (📚→✅→👥): News analysis, claim validation, research
+- **Strategic Planning** (📊→🔄→🔍): Project planning, roadmaps, strategy development
+- **Relationship Analysis** (📊→📚→👥): Network analysis, complex systems, interconnections
+- **Predictive Scenarios** (⛓️→📊→🧮): Forecasting, trend analysis, scenario planning
+- **Knowledge Synthesis** (📚→📊→⛓️): Comprehensive understanding, knowledge maps
+- **Analytical Problem-Solving** (🔎→🧩→🧮): Debugging, system analysis, optimization
+
+The system also includes pure reasoning modes for simpler queries:
+- **RAG Alone** (📚): Simple factual queries
+- **Symbolic Alone** (🧮): Basic calculations
+- **Creative Alone** (🎨): Simple creative requests
+- **Verification Alone** (✅): Quick fact checks
+
+Watch the dynamic emoji indicators during responses to see which reasoning types are being used!
+
+For detailed information about the implementation status, check out [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+
+For a comprehensive guide to the multi-agent workflows, see [MULTI_AGENT_WORKFLOWS.md](MULTI_AGENT_WORKFLOWS.md).

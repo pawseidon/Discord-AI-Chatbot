@@ -59,6 +59,9 @@ class AIBot(commands.AutoShardedBot):
             await symbolic_reasoning_service.ensure_initialized()
             await memory_service.load_from_disk()
             
+            # Register services after initialization to avoid circular imports
+            workflow_service.register_services(agent_service=agent_service, memory_service=memory_service)
+            
             logger.info("AI services initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing AI services: {e}")

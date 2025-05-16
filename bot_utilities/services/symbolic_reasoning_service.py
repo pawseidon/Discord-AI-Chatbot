@@ -9,6 +9,7 @@ It serves as a bridge between neural reasoning in LLMs and precise rule-based co
 import logging
 import re
 import asyncio
+import traceback
 from typing import Dict, Any, Optional, List, Callable, Tuple, Union
 import json
 
@@ -661,6 +662,108 @@ class SymbolicReasoningService:
             List of available reasoner names
         """
         return list(symbolic_reasoning_registry.get_all_reasoners().keys())
+
+    async def process_calculation(self, query: str, user_id: str = None, conversation_id: str = None, update_callback: Callable = None) -> Dict[str, Any]:
+        """
+        Process a calculation request from the agent service
+        
+        Args:
+            query: The mathematical expression or equation to solve
+            user_id: The user ID (optional)
+            conversation_id: Conversation ID for context (optional)
+            update_callback: Optional callback for streaming updates
+            
+        Returns:
+            Dict containing the result and explanation
+        """
+        try:
+            # Ensure the service is initialized
+            await self.ensure_initialized()
+            
+            # Log the calculation request
+            logger.info(f"Processing calculation: {query}")
+            
+            # Notify about thinking process if callback provided
+            if update_callback:
+                await update_callback("thinking", {
+                    "thinking": "Performing symbolic calculation..."
+                })
+            
+            # First try to solve as a math problem using solve_math_problem
+            math_result = await self.solve_math_problem(query)
+            
+            if math_result.get("success", False):
+                # Format the result for the agent
+                steps_text = "\n".join(math_result.get("steps", []))
+                result_text = math_result.get("result", "Unknown")
+                
+                # Notify about completion if callback provided
+                if update_callback:
+                    await update_callback("thinking", {
+                        "thinking": f"Calculation complete: {result_text}"
+                    })
+                
+                return {
+                    "response": f"Result: {result_text}",
+                    "result": result_text,
+                    "thinking": steps_text,
+                    "success": True,
+                    "reasoning_type": "symbolic"
+                }
+            else:
+                # If solving as a math problem failed, try direct evaluation
+                eval_result = await self.evaluate_expression(query)
+                
+                if eval_result.get("success", False):
+                    # Format the result for the agent
+                    steps_text = "\n".join(eval_result.get("steps", []))
+                    result_text = eval_result.get("result", "Unknown")
+                    
+                    # Notify about completion if callback provided
+                    if update_callback:
+                        await update_callback("thinking", {
+                            "thinking": f"Calculation complete: {result_text}"
+                        })
+                    
+                    return {
+                        "response": f"Result: {result_text}",
+                        "result": result_text,
+                        "thinking": steps_text,
+                        "success": True,
+                        "reasoning_type": "symbolic"
+                    }
+                else:
+                    # Both methods failed
+                    error = eval_result.get("error", "Unknown error")
+                    
+                    # Notify about error if callback provided
+                    if update_callback:
+                        await update_callback("thinking", {
+                            "thinking": f"Calculation failed: {error}"
+                        })
+                    
+                    return {
+                        "response": f"I couldn't solve this mathematical expression. Error: {error}",
+                        "thinking": f"Failed to solve expression: {query}\nError: {error}",
+                        "success": False,
+                        "reasoning_type": "symbolic"
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Error in process_calculation: {str(e)}")
+            
+            # Notify about error if callback provided
+            if update_callback:
+                await update_callback("thinking", {
+                    "thinking": f"Error in calculation: {str(e)}"
+                })
+            
+            return {
+                "response": f"I encountered an error while calculating: {str(e)}",
+                "thinking": f"Exception in process_calculation: {str(e)}",
+                "success": False,
+                "reasoning_type": "symbolic"
+            }
 
 # Create a singleton instance for global access
 symbolic_reasoning_service = SymbolicReasoningService() 

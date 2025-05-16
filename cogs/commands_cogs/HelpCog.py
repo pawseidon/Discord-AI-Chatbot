@@ -155,6 +155,15 @@ class HelpCog(commands.Cog):
             inline=False
         )
 
+        # Add emoji toggle feature
+        embed.add_field(
+            name="**Emoji Controls**",
+            value=(
+                "• You can control emojis with natural language: \"disable emojis\" or \"enable emojis\""
+            ),
+            inline=False
+        )
+
         embed.set_footer(text=f"{current_language['help_footer']}")
         
         await channel.send(embed=embed)

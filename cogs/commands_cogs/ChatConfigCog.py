@@ -22,11 +22,9 @@ class ChatConfigCog(commands.Cog):
     async def toggleactive(self, ctx, persona: discord.app_commands.Choice[str] = instructions[instruc_config]):
         channel_id = f"{ctx.channel.id}"
         active_channels = self.active_channels()
+        
         if channel_id in active_channels:
-            del active_channels[channel_id]
-            with open("channels.json", "w", encoding='utf-8') as f:
-                json.dump(active_channels, f, indent=4)
-            await ctx.send(f"{ctx.channel.mention} {current_language['toggleactive_msg_1']}", delete_after=3)
+            await ctx.send(f"{ctx.channel.mention} {current_language['toggleactive_msg_1']} (Already active)", delete_after=3)
         else:
             active_channels[channel_id] = persona.value if persona.value else persona
             with open("channels.json", "w", encoding='utf-8') as f:
@@ -41,7 +39,16 @@ class ChatConfigCog(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def toggleinactive(self, ctx, persona: discord.app_commands.Choice[str] = instructions[instruc_config]):
         """Toggle the bot inactive/active in the current channel - alternative name for toggleactive"""
-        await self.toggleactive(ctx, persona)
+        channel_id = f"{ctx.channel.id}"
+        active_channels = self.active_channels()
+        
+        if channel_id in active_channels:
+            del active_channels[channel_id]
+            with open("channels.json", "w", encoding='utf-8') as f:
+                json.dump(active_channels, f, indent=4)
+            await ctx.send(f"{ctx.channel.mention} {current_language['toggleactive_msg_1']}", delete_after=3)
+        else:
+            await ctx.send(f"{ctx.channel.mention} is already inactive.", delete_after=3)
 
     @commands.hybrid_command(name="clearhistory", description=current_language["bonk"])
     async def clearhistory(self, ctx):
